@@ -92,6 +92,7 @@
   <div id="menu">
     <button id="pickPhoto">🖼 写真から選ぶ</button>
     <button id="clearPins">固定した線を消す</button>
+    <button id="detect">ブロックを自動検出</button>
     <button id="mField">枠を調整する</button>
     <button id="width">玉の通り道を表示</button>
     <button id="wobble">ブレ幅 ±0.5°</button>
@@ -105,7 +106,7 @@
 
 <script>
 (() => {
-  const VERSION = '1.12';
+  const VERSION = '1.15';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -134,7 +135,8 @@
   const WALL_PAD = 12 / 1170;
   const GUIDE_R = 100 / 1170;
   // Block = one cell of the 8-column grid (1170/8 = 146.25px), measured from gameplay video.
-  const BLOCK = 1 / 8;
+  const BLOCK = 1 / 8;            // cell width / stack pitch (146.25px of 1170)
+  const BLOCK_H = 169 / 1170;     // hitbox height: sprite top-8 .. sprite bottom+5 (measured)
   const blockImg = new Image(); blockImg.src = 'block.png'; blockImg.onload = () => draw();
   // blocks are 146x146 cells; when near another block, snap so they connect edge to edge
   function placeBlock(l, t, self = -1) {
@@ -142,13 +144,109 @@
     let best = null, bd = snap;
     S.blocks.forEach((B, k) => {
       if (k === self) return;
-      for (const [cl, ct] of [[B.l - W, B.t], [B.l + W, B.t], [B.l, B.t - W], [B.l, B.t + W]]) {
+      for (const [cl, ct] of [[B.l - W, B.t], [B.l + W, B.t], [B.l, B.t - W], [B.l, B.t + W]]) {   // stack pitch = W
         const d = Math.hypot(cl - l, ct - t);
         if (d < bd && !S.blocks.some((o, j) => j !== self && j !== k && Math.abs(o.l - cl) < 1 && Math.abs(o.t - ct) < 1)) { bd = d; best = [cl, ct]; }
       }
     });
     if (best) [l, t] = best;
-    return {l, t, r: l + W, b: t + W};
+    return {l, t, r: l + W, b: t + BLOCK_H * IW};
+  }
+
+  // ---- block auto-detection (template = top face of the block sprite, normalized cross-correlation) ----
+  let tplCache = null;
+  function grayAt(src, sx, sy, sw, sh, w, h) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, out = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) out[i] = d[i * 4] * .299 + d[i * 4 + 1] * .587 + d[i * 4 + 2] * .114;
+    return out;
+  }
+  function detectBlocks() {
+    if (!img || !blockImg.naturalWidth) return [];
+    const k = 4 * IW / 1170;                 // work at 1/4 scale of a 1170-wide screen
+    const tw = Math.round(112 / 4), th = Math.round(100 / 4);
+    if (!tplCache) {
+      const t = grayAt(blockImg, 12, 6, 112, 100, tw, th);
+      let m = 0; t.forEach(v => m += v); m /= t.length;
+      let ss = 0; for (let i = 0; i < t.length; i++) { t[i] -= m; ss += t[i] * t[i]; }
+      tplCache = {t, n: Math.sqrt(ss)};
+    }
+    const {t, n: tn} = tplCache;
+    const f = S.field, x0 = Math.max(0, f.l - 20), y0 = Math.max(0, f.t - 60);
+    const W = Math.round((f.r - x0 + 20) / k), H = Math.round((f.b - y0 + 20) / k);
+    const g = grayAt(img, x0, y0, W * k, H * k, W, H);
+    const RW = W - tw, RH = H - th, res = new Float32Array(Math.max(0, RW * RH));
+    // integral images for fast local mean/variance
+    const I = new Float64Array((W + 1) * (H + 1)), I2 = new Float64Array((W + 1) * (H + 1));
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const v = g[y * W + x], i = (y + 1) * (W + 1) + x + 1;
+      I[i] = v + I[i - 1] + I[i - W - 1] - I[i - W - 2]; I2[i] = v * v + I2[i - 1] + I2[i - W - 1] - I2[i - W - 2];
+    }
+    const N = tw * th;
+    for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++) {
+      const a = y * (W + 1) + x, b = a + tw, c = a + th * (W + 1), d = c + tw;
+      const sum = I[d] - I[b] - I[c] + I[a], sum2 = I2[d] - I2[b] - I2[c] + I2[a];
+      const vs = sum2 - sum * sum / N; if (vs < 1e-3) continue;
+      let acc = 0;
+      for (let j = 0; j < th; j++) { const row = (y + j) * W + x, tr = j * tw; for (let i = 0; i < tw; i++) acc += g[row + i] * t[tr + i]; }
+      res[y * RW + x] = acc / (Math.sqrt(vs) * tn);
+    }
+    const score = (ix, iy) => {        // best score near an image-px position of the sprite-face top-left
+      const cx = Math.round((ix - x0) / k), cy = Math.round((iy - y0) / k); let m = -1;
+      for (let y = cy - 2; y <= cy + 2; y++) for (let x = cx - 2; x <= cx + 2; x++)
+        if (x >= 0 && y >= 0 && x < RW && y < RH) m = Math.max(m, res[y * RW + x]);
+      return m;
+    };
+    // peaks
+    const peaks = [], r2 = res.slice();
+    for (;;) {
+      let bi = -1, bv = .6;
+      for (let i = 0; i < r2.length; i++) if (r2[i] > bv) { bv = r2[i]; bi = i; }
+      if (bi < 0) break;
+      const px = bi % RW, py = (bi / RW) | 0;
+      peaks.push({x: x0 + px * k, y: y0 + py * k, s: bv});
+      for (let y = py - 18; y <= py + 18; y++) for (let x = px - 18; x <= px + 18; x++) if (x >= 0 && y >= 0 && x < RW && y < RH) r2[y * RW + x] = -1;
+    }
+    // colour check: block face is dull grey (low saturation, mid brightness) and its base is very dark
+    const u = IW / 1170;
+    const cc = document.createElement('canvas').getContext('2d', {willReadFrequently: true});
+    const stats = (x, y, w, h) => {
+      cc.canvas.width = Math.max(1, Math.round(w / 2)); cc.canvas.height = Math.max(1, Math.round(h / 2));
+      cc.drawImage(img, x, y, w, h, 0, 0, cc.canvas.width, cc.canvas.height);
+      const d = cc.getImageData(0, 0, cc.canvas.width, cc.canvas.height).data; let S = 0, V = 0, n = d.length / 4;
+      for (let i = 0; i < d.length; i += 4) { const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]); V += mx; S += mx ? (mx - mn) / mx * 255 : 0; }
+      return {S: S / n, V: V / n};
+    };
+    const looksLikeBlock = q => {
+      const face = stats(q.x, q.y, 112 * u, 100 * u), base = stats(q.x, q.y + 120 * u, 112 * u, 18 * u);
+      return face.S < 110 && face.V < 145 && base.V < 80;
+    };
+    const P = BLOCK * IW, near = (a, b) => Math.abs(a - b) < 10 * IW / 1170;
+    const aligned = (a, b) => (near(a.x, b.x) && Math.abs(Math.round((a.y - b.y) / P) * P - (a.y - b.y)) < 12) ||
+                              (near(a.y, b.y) && Math.abs(Math.round((a.x - b.x) / P) * P - (a.x - b.x)) < 12);
+    let found = peaks.filter(looksLikeBlock);
+    // fill gaps inside straight runs (blocks partly hidden by enemies)
+    for (const a of found.slice()) for (const b of found.slice()) {
+      for (const [ax, dir] of [['x', 'y'], ['y', 'x']]) {
+        if (!near(a[ax], b[ax]) || b[dir] <= a[dir]) continue;
+        const steps = Math.round((b[dir] - a[dir]) / P);
+        if (steps < 2 || steps > 6 || Math.abs(steps * P - (b[dir] - a[dir])) > 12) continue;
+        for (let m = 1; m < steps; m++) {
+          const q = {[ax]: a[ax], [dir]: a[dir] + m * (b[dir] - a[dir]) / steps};
+          if (found.some(o => near(o.x, q.x) && near(o.y, q.y))) continue;
+          if (score(q.x, q.y) >= .35) found.push({...q, s: 0});
+        }
+      }
+    }
+    // sprite-face top-left -> cell (face starts 5px into the sprite, sprite 5px into the cell, hitbox top 8px above sprite)
+    return found.filter(q => q.y > f.t - 124 && q.y < f.b - 34)
+                .map(q => { const l = q.x - 17 * IW / 1170, tt = q.y - 14 * IW / 1170; return {l, t: tt, r: l + P, b: tt + BLOCK_H * IW}; });
+  }
+  function runDetect(quiet) {
+    const t0 = performance.now(), B = detectBlocks();
+    S.blocks = B; persist(); draw();
+    if (!quiet || B.length) toast(`ブロックを${B.length}個見つけました（「敵・壁」で直せます）`, 3000);
   }   // radius of the orange turn ring (measured ~97-112)
   const wallPad = () => WALL_PAD * IW;
   const S = {
@@ -306,6 +404,7 @@
   function drawPath(pts) {
     const sp = pts.map(p => toS(p[0], p[1]));
     ctx.save();
+    if (mode === 'arrow') ctx.globalAlpha = .28;   // keep the background visible while looking for a landmark
     ctx.lineJoin = ctx.lineCap = 'round';
     if (S.showWidth) {
       ctx.globalAlpha = .16; ctx.lineWidth = S.r * 2 * scale;
@@ -434,16 +533,26 @@
   // ---- arrow mode: Monst-style arrow on the first segment, tip slides along the line ----
   let tipD = null;   // distance from ball to arrow tip (image px)
   function firstLen(pts) { return pts.length > 1 ? Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) : 0; }
+  function maxTip() {   // straight line from the ball until it leaves the screenshot
+    const a = S.angle * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a);
+    const tx = dx > 1e-9 ? (IW - S.ball.x) / dx : dx < -1e-9 ? -S.ball.x / dx : Infinity;
+    const ty = dy > 1e-9 ? (IH - S.ball.y) / dy : dy < -1e-9 ? -S.ball.y / dy : Infinity;
+    return Math.min(tx, ty);
+  }
   function tipPoint(pts) {
     const L = firstLen(pts), a = S.angle * Math.PI / 180;
     if (tipD == null) tipD = Math.min(L * .6, 520 / 1170 * IW);
-    const d = Math.max(S.r * 1.2, Math.min(tipD, L));
+    const d = Math.max(S.r * 1.2, Math.min(tipD, maxTip()));
     return [S.ball.x + Math.cos(a) * d, S.ball.y + Math.sin(a) * d];
   }
   function drawArrowMode(pts) {
     const [tx, ty] = tipPoint(pts), [stx, sty] = toS(tx, ty), [bx, by] = toS(S.ball.x, S.ball.y);
     const a = S.angle * Math.PI / 180, nx = -Math.sin(a), ny = Math.cos(a), hw = 42 / 1170 * IW * scale;
     ctx.save();
+    // the first line extended straight past the bounce point
+    const ml = maxTip(), [ex, ey] = toS(S.ball.x + Math.cos(a) * ml, S.ball.y + Math.sin(a) * ml);
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(stx, sty);
     ctx.lineTo(bx + nx * hw, by + ny * hw); ctx.lineTo(bx - nx * hw, by - ny * hw); ctx.closePath();
     const g = ctx.createLinearGradient(bx, by, stx, sty);
@@ -513,7 +622,7 @@
         // sprite: 136x156 drawn inside the 146 cell (5px margin, base shadow hangs below)
         const sc = w / 146.25;
         ctx.globalAlpha = .9;
-        ctx.drawImage(blockImg, x1 + 5 * sc, y1 + 5 * sc, 136 * sc, 156 * sc);
+        ctx.drawImage(blockImg, x1 + 5 * sc, y1 + 8 * sc, 136 * sc, 156 * sc);
         ctx.globalAlpha = 1;
       } else { ctx.fillStyle = 'rgba(120,200,255,.2)'; ctx.fillRect(x1, y1, w, h); }
       ctx.setLineDash(sel ? [6, 4] : [3, 4]); ctx.lineWidth = sel ? 2.5 : 1.2;
@@ -543,8 +652,7 @@
   function moveTip(sx, sy) {
     const [ix, iy] = toI(sx, sy), a = S.angle * Math.PI / 180;
     tipD = (ix - S.ball.x) * Math.cos(a) + (iy - S.ball.y) * Math.sin(a);   // project onto the shot line
-    const pts = trace(S.ball.x, S.ball.y, S.angle, wallPad(), 0);
-    tipD = Math.max(S.r * 1.2, Math.min(tipD, firstLen(pts)));
+    tipD = Math.max(S.r * 1.2, Math.min(tipD, maxTip()));
   }
 
   // ball center may go a little past the frame line
@@ -752,6 +860,7 @@
   $('width').onclick = () => { S.showWidth = !S.showWidth; syncUI(); persist(); draw(); };
   $('pin').onclick = () => { S.pins.push({x: S.ball.x, y: S.ball.y, angle: S.angle, r: S.r, bounces: S.bounces}); draw(); };
   $('clearPins').onclick = () => { S.pins = []; closeMenu(); draw(); };
+  $('detect').onclick = () => { closeMenu(); runDetect(false); };
 
   // toast
   let toastTimer;
@@ -788,9 +897,8 @@
       $('radius').max = Math.round(IW / 6);
       S.pins = [];
       syncUI();
-      layout();
-      persist();
       setMode('aim');
+      setTimeout(() => runDetect(true), 30);
     };
     im.src = url;
   }
