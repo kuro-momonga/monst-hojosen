@@ -19,7 +19,7 @@
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:14px}
-  body{display:flex;flex-direction:column;overflow:hidden}
+  body{display:flex;flex-direction:column;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
   #stage{flex:1;position:relative;min-height:0;margin-top:env(safe-area-inset-top)}
   canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
   #hint{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(0,0,0,.6);
@@ -148,7 +148,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.9';
+  const VERSION = '2.10';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -908,7 +908,10 @@
     const [sx, sy] = pos(e);
     const [ix, iy] = toI(sx, sy);
     hint.style.display = 'none';
-    if (mode === 'arrow') { dragInfo = {kind: 'tip', sx, sy}; moveTip(sx, sy); draw(); return; }
+    if (mode === 'arrow') {   // relative drag like scrolling: the tip moves by the finger's movement along the line
+      if (tipD == null) tipPoint(trace(S.ball.x, S.ball.y, S.angle, wallPad(), 0));
+      dragInfo = {kind: 'tip', sx, sy, sx0: sx, sy0: sy, d0: tipD}; draw(); return;
+    }
     if (mode === 'ball') {   // tap = snap to the turn ring there; drag = move relatively (finger never hides the ball)
       dragInfo = {kind: 'ballRel', sx, sy, lx: sx, ly: sy, sx0: sx, sy0: sy, t0: performance.now()}; draw(); return;
     }
@@ -984,7 +987,11 @@
     dragInfo.sx = sx; dragInfo.sy = sy;
     const [ix, iy] = toI(sx, sy);
     const k = dragInfo.kind;
-    if (k === 'tip') moveTip(sx, sy);
+    if (k === 'tip') {
+      const a = S.angle * Math.PI / 180;
+      const along = ((sx - dragInfo.sx0) * Math.cos(a) + (sy - dragInfo.sy0) * Math.sin(a)) / scale;
+      tipD = Math.max(S.r * 1.2, Math.min(dragInfo.d0 + along, maxTip()));
+    }
     else if (k === 'ballRel') {
       S.ball.x += (sx - dragInfo.lx) / scale; S.ball.y += (sy - dragInfo.ly) / scale; clampBall();
       dragInfo.lx = sx; dragInfo.ly = sy; padFocus = [S.ball.x, S.ball.y];
