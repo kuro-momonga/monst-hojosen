@@ -89,13 +89,27 @@
     <button id="width">玉の通り道を表示</button>
     <button id="pull">引っ張り操作</button>
     <label class="sl">玉サイズ <input id="radius" type="range" min="10" max="195" value="80"><b id="rv">80</b></label>
-    <div class="small" style="text-align:right">v1.2</div>
+    <div class="small" style="text-align:right" id="ver"></div>
   </div>
 </div>
 <div id="toast"></div>
 
 <script>
 (() => {
+  const VERSION = '1.3';
+  // home-screen app: reload when a newer version is deployed
+  async function checkUpdate() {
+    try {
+      const r = await fetch('version.json?t=' + Date.now(), {cache: 'no-store'});
+      const {v} = await r.json();
+      if (v && v !== VERSION && sessionStorage.getItem('reloadedFor') !== v) {
+        sessionStorage.setItem('reloadedFor', v);
+        location.replace(location.pathname + '?v=' + v);
+      }
+    } catch (e) {}
+  }
+  checkUpdate();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
   const cv = document.getElementById('cv');
   const ctx = cv.getContext('2d');
   const hint = document.getElementById('hint');
@@ -181,43 +195,61 @@
   }
 
   // ---- drawing ----
-  const COLORS = ['#ffcf3f', '#4fd1ff', '#ff7bd5', '#7dff9a', '#ff9f43', '#b48cff'];
+  // segment colors: shot → after 1st bounce → after 2nd …
+  const SEG = ['#ffffff', '#ffd43b', '#ff4d4d', '#3da5ff', '#3ddc84', '#d36bff', '#ff8c1a', '#00e5e5'];
+  const segColor = i => SEG[i % SEG.length];
 
-  function drawPath(pts, color, alpha, numbered) {
+  const polyline = sp => { ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); };
+
+  // pinned lines: dashed, single color, faint
+  function drawPinned(pts) {
     const sp = pts.map(p => toS(p[0], p[1]));
     ctx.save();
-    ctx.globalAlpha = alpha;
+    ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.setLineDash([7, 6]);
+    ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 4; polyline(sp); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 2; polyline(sp); ctx.stroke();
+    ctx.restore();
+  }
+
+  // current line: each segment in its own color, bounce points numbered in the color that follows
+  function drawPath(pts) {
+    const sp = pts.map(p => toS(p[0], p[1]));
+    ctx.save();
     ctx.lineJoin = ctx.lineCap = 'round';
     if (S.showWidth) {
-      ctx.strokeStyle = color; ctx.globalAlpha = alpha * 0.18;
-      ctx.lineWidth = S.r * 2 * scale;
-      ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke();
-      ctx.globalAlpha = alpha;
-    }
-    ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.lineWidth = 5;
-    ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke();
-    ctx.strokeStyle = color; ctx.lineWidth = 2.5;
-    ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke();
-    if (numbered) {
-      ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      for (let i = 1; i < sp.length - 1; i++) {
-        const [x, y] = sp[i];
-        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#111'; ctx.fillText(i, x, y + .5);
+      ctx.globalAlpha = .16; ctx.lineWidth = S.r * 2 * scale;
+      for (let i = 0; i < sp.length - 1; i++) {
+        ctx.strokeStyle = segColor(i); polyline([sp[i], sp[i + 1]]); ctx.stroke();
       }
-      // arrow on first segment
-      if (sp.length > 1) {
-        const [x0, y0] = sp[0], [x1, y1] = sp[1];
-        const L = Math.hypot(x1 - x0, y1 - y0);
-        if (L > 30) {
-          const ux = (x1 - x0) / L, uy = (y1 - y0) / L;
-          const ax = x0 + ux * Math.min(L * .5, 90), ay = y0 + uy * Math.min(L * .5, 90);
-          ctx.fillStyle = color; ctx.beginPath();
-          ctx.moveTo(ax + ux * 10, ay + uy * 10);
-          ctx.lineTo(ax - ux * 6 - uy * 7, ay - uy * 6 + ux * 7);
-          ctx.lineTo(ax - ux * 6 + uy * 7, ay - uy * 6 - ux * 7);
-          ctx.closePath(); ctx.fill();
-        }
+      ctx.globalAlpha = 1;
+    }
+    for (let i = 0; i < sp.length - 1; i++) {
+      ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 6.5; polyline([sp[i], sp[i + 1]]); ctx.stroke();
+    }
+    for (let i = 0; i < sp.length - 1; i++) {
+      ctx.strokeStyle = segColor(i); ctx.lineWidth = 3.5; polyline([sp[i], sp[i + 1]]); ctx.stroke();
+    }
+    // bounce markers
+    ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i = 1; i < sp.length - 1; i++) {
+      const [x, y] = sp[i];
+      ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = segColor(i); ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#111'; ctx.fillText(i, x, y + .5);
+    }
+    // arrow on first segment
+    if (sp.length > 1) {
+      const [x0, y0] = sp[0], [x1, y1] = sp[1];
+      const L = Math.hypot(x1 - x0, y1 - y0);
+      if (L > 30) {
+        const ux = (x1 - x0) / L, uy = (y1 - y0) / L;
+        const ax = x0 + ux * Math.min(L * .5, 90), ay = y0 + uy * Math.min(L * .5, 90);
+        ctx.fillStyle = segColor(0); ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(ax + ux * 11, ay + uy * 11);
+        ctx.lineTo(ax - ux * 7 - uy * 8, ay - uy * 7 + ux * 8);
+        ctx.lineTo(ax - ux * 7 + uy * 8, ay - uy * 7 - ux * 8);
+        ctx.closePath(); ctx.stroke(); ctx.fill();
       }
     }
     ctx.restore();
@@ -259,11 +291,11 @@
     ctx.restore();
 
     // pinned
-    S.pins.forEach((p, i) => drawPath(trace(p.x, p.y, p.angle, p.r, p.bounces), COLORS[(i + 1) % COLORS.length], .7, false));
+    S.pins.forEach(p => drawPinned(trace(p.x, p.y, p.angle, p.r, p.bounces)));
 
     // current
     const pts = trace(S.ball.x, S.ball.y, S.angle, S.r, S.bounces);
-    drawPath(pts, COLORS[0], 1, true);
+    drawPath(pts);
 
     // ball
     const [bx, by] = toS(S.ball.x, S.ball.y);
@@ -490,6 +522,7 @@
   window.addEventListener('dragover', e => e.preventDefault());
   window.addEventListener('drop', e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); });
 
+  document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
   syncUI();
   layout();
