@@ -105,7 +105,7 @@
 
 <script>
 (() => {
-  const VERSION = '1.11';
+  const VERSION = '1.12';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -136,10 +136,18 @@
   // Block = one cell of the 8-column grid (1170/8 = 146.25px), measured from gameplay video.
   const BLOCK = 1 / 8;
   const blockImg = new Image(); blockImg.src = 'block.png'; blockImg.onload = () => draw();
-  // x snaps to the 8-column grid (blocks line up with screen edges); y is free
-  function placeBlock(l, t) {
-    const W = BLOCK * IW;
-    l = Math.round(l / W) * W;
+  // blocks are 146x146 cells; when near another block, snap so they connect edge to edge
+  function placeBlock(l, t, self = -1) {
+    const W = BLOCK * IW, snap = W * .35;
+    let best = null, bd = snap;
+    S.blocks.forEach((B, k) => {
+      if (k === self) return;
+      for (const [cl, ct] of [[B.l - W, B.t], [B.l + W, B.t], [B.l, B.t - W], [B.l, B.t + W]]) {
+        const d = Math.hypot(cl - l, ct - t);
+        if (d < bd && !S.blocks.some((o, j) => j !== self && j !== k && Math.abs(o.l - cl) < 1 && Math.abs(o.t - ct) < 1)) { bd = d; best = [cl, ct]; }
+      }
+    });
+    if (best) [l, t] = best;
     return {l, t, r: l + W, b: t + W};
   }   // radius of the orange turn ring (measured ~97-112)
   const wallPad = () => WALL_PAD * IW;
@@ -497,7 +505,8 @@
 
   function drawBlocks() {
     ctx.save();
-    S.blocks.forEach((B, k) => {
+    // draw top rows first so lower blocks overlap the base of the ones above (like the game)
+    S.blocks.map((B, k) => [B, k]).sort((a, b) => a[0].t - b[0].t).forEach(([B, k]) => {
       const [x1, y1] = toS(B.l, B.t), [x2, y2] = toS(B.r, B.b), w = x2 - x1, h = y2 - y1;
       const sel = mode === 'enemy' && k === selBlock;
       if (blockImg.complete && blockImg.naturalWidth) {
@@ -639,7 +648,7 @@
     if (dragInfo.kind === 'tip') {
       moveTip(sx, sy);
     } else if (dragInfo.kind === 'block') {
-      S.blocks[dragInfo.k] = placeBlock(ix + dragInfo.off[0], iy + dragInfo.off[1]);
+      S.blocks[dragInfo.k] = placeBlock(ix + dragInfo.off[0], iy + dragInfo.off[1], dragInfo.k);
     } else if (dragInfo.kind === 'enemy') {
       const en = S.enemies[dragInfo.k];
       if (dragInfo.how === 'move') { en.x = ix + dragInfo.off[0]; en.y = iy + dragInfo.off[1]; }
@@ -697,7 +706,7 @@
     hint.style.display = '';
     hint.textContent = m === 'aim' ? (S.pointAim ? '玉をドラッグで移動／それ以外をタッチで方向' : '引っ張って狙う／玉を長押しで移動')
                      : m === 'arrow' ? '角度は固定。線の上をなぞって、矢印の先に合う目印を探す'
-                     : m === 'enemy' ? (editShape === 'rect' ? 'タップでブロックを置く／ドラッグで移動（横はマス目に吸着）' : 'タップで敵を置く・引っ張って大きさ／丸の中で移動・ふちで大きさ')
+                     : m === 'enemy' ? (editShape === 'rect' ? 'タップでブロックを置く／ドラッグで移動（近くのブロックにくっつく）' : 'タップで敵を置く・引っ張って大きさ／丸の中で移動・ふちで大きさ')
                      : '赤枠の辺・角をドラッグで調整';
     layout();
   }
