@@ -128,7 +128,7 @@
   <div id="menu">
     <button id="stages">📁 ステージ保存・読み込み</button>
     <button id="dim">画面：通常</button>
-    <button id="detect">ブロックを自動検出</button>
+    <button id="detect">敵・ブロックを自動検出</button>
     <button id="eClear" class="danger">敵とブロックを全部消す</button>
     <button id="clearPins">固定した線を消す</button>
     <button id="mField">枠を調整する</button>
@@ -145,7 +145,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.2';
+  const VERSION = '2.3';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -282,10 +282,43 @@
     return found.filter(q => q.y > f.t - 124 && q.y < f.b - 34)
                 .map(q => { const l = q.x - 17 * IW / 1170, tt = q.y - 14 * IW / 1170; return {l, t: tt, r: l + P, b: tt + BLOCK_H * IW}; });
   }
+  // ---- enemy auto-detection: every non-boss enemy has a small yellow HP bar under it ----
+  // Measured: hit-circle centre ≈ bar centre x, 93px above the bar; minion hit radius ≈ 73px (of 1170).
+  function detectEnemies() {
+    if (!img) return [];
+    const u = IW / 1170, f = S.field;
+    const x0 = Math.max(0, Math.round(f.l - 30 * u)), y0 = Math.max(0, Math.round(f.t - 40 * u));
+    const w = Math.round(Math.min(IW, f.r + 30 * u) - x0), h = Math.round(Math.min(IH, f.b + 60 * u) - y0);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, m = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
+      if (r > 140 && gg > 110 && b < 60 && r - b > 110 && Math.abs(r - gg) < 60) m[i] = 1;
+    }
+    // connected components (4-neighbour flood fill)
+    const seen = new Uint8Array(w * h), out = [], stack = [];
+    for (let i = 0; i < w * h; i++) {
+      if (!m[i] || seen[i]) continue;
+      let minx = 1e9, maxx = -1, miny = 1e9, maxy = -1, n = 0; stack.push(i); seen[i] = 1;
+      while (stack.length) {
+        const j = stack.pop(), x = j % w, y = (j / w) | 0; n++;
+        if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+        for (const k of [j - 1, j + 1, j - w, j + w]) if (k >= 0 && k < w * h && m[k] && !seen[k] && Math.abs((k % w) - x) <= 1) { seen[k] = 1; stack.push(k); }
+      }
+      const bw = maxx - minx + 1, bh = maxy - miny + 1;
+      if (bw >= 45 * u && bw <= 140 * u && bh >= 4 * u && bh <= 22 * u && bw / bh > 3.5 && n > .6 * bw * bh)
+        out.push({x: x0 + (minx + maxx) / 2, y: y0 + miny - 93 * u, R: 73 * u});
+    }
+    return out.filter(e => e.y > f.t - 60 * u && e.y < f.b);
+  }
   function runDetect(quiet) {
-    const t0 = performance.now(), B = detectBlocks();
-    S.blocks = B; persist(); draw();
-    if (!quiet || B.length) toast(`ブロックを${B.length}個見つけました（「② 配置」で直せます）`, 3000);
+    const B = detectBlocks(), E = detectEnemies();
+    S.blocks = B;
+    // keep enemies the user already placed; add detected ones that aren't near an existing circle
+    E.forEach(e => { if (!S.enemies.some(o => Math.hypot(o.x - e.x, o.y - e.y) < o.R)) S.enemies.push(e); });
+    persist(); draw();
+    if (!quiet || B.length || E.length) toast(`敵${E.length}体・ブロック${B.length}個を自動で置きました`, 3000);
   }   // radius of the orange turn ring (measured ~97-112)
   const wallPad = () => WALL_PAD * IW;
   const S = {
@@ -1049,7 +1082,7 @@
         openSheet(`<h3>前の配置はどうしますか？</h3>
           <div class="small">敵 ${S.enemies.length}体・ブロック ${S.blocks.length}個が置かれています</div>
           <button id="keepP" class="on" style="padding:13px">そのまま使う（玉の位置だけ決める）</button>
-          <button id="resetP" style="padding:13px">リセットして作り直す（ブロックは自動検出）</button>`,
+          <button id="resetP" style="padding:13px">リセットして作り直す（敵・ブロックを自動検出）</button>`,
           sh => { sh.querySelector('#keepP').onclick = () => after(false); sh.querySelector('#resetP').onclick = () => after(true); });
         setMode('ball');
       } else after(true);
