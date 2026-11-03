@@ -88,7 +88,7 @@
     <button id="mField">枠を調整する</button>
     <button id="width">玉の通り道を表示</button>
     <button id="pull">引っ張り操作</button>
-    <label class="sl">玉サイズ <input id="radius" type="range" min="10" max="195" value="80"><b id="rv">80</b></label>
+    <label class="sl">玉の幅 <input id="radius" type="range" min="10" max="195" value="80"><b id="rv">80</b></label>
     <div class="small" style="text-align:right" id="ver"></div>
   </div>
 </div>
@@ -96,7 +96,7 @@
 
 <script>
 (() => {
-  const VERSION = '1.3';
+  const VERSION = '1.4';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -119,6 +119,10 @@
   let img = null;                    // HTMLImageElement or null
   let IW = 1170, IH = 2532;          // virtual size when no image (iPhone screenshot)
   const DEFAULT_FIELD = {l: .035, t: .187, r: .965, b: .676};   // ratio of image size
+  // Measured from gameplay video (v1.4): the ball CENTER travels to ~8px (of 1170) inside the
+  // visible wall line. The character's size does not push the bounce point inward.
+  const WALL_PAD = 8 / 1170;
+  const wallPad = () => WALL_PAD * IW;
   const S = {
     field: {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH},
     ball: {x: IW * .5, y: IH * .64},
@@ -291,10 +295,10 @@
     ctx.restore();
 
     // pinned
-    S.pins.forEach(p => drawPinned(trace(p.x, p.y, p.angle, p.r, p.bounces)));
+    S.pins.forEach(p => drawPinned(trace(p.x, p.y, p.angle, wallPad(), p.bounces)));
 
     // current
-    const pts = trace(S.ball.x, S.ball.y, S.angle, S.r, S.bounces);
+    const pts = trace(S.ball.x, S.ball.y, S.angle, wallPad(), S.bounces);
     drawPath(pts);
 
     // ball
@@ -349,9 +353,9 @@
 
   // ball center may go a little past the frame line
   function clampBall() {
-    const f = S.field, k = S.r * .5;
-    S.ball.x = Math.min(Math.max(S.ball.x, f.l - k), f.r + k);
-    S.ball.y = Math.min(Math.max(S.ball.y, f.t - k), f.b + k);
+    const f = S.field, k = wallPad();
+    S.ball.x = Math.min(Math.max(S.ball.x, f.l + k), f.r - k);
+    S.ball.y = Math.min(Math.max(S.ball.y, f.t + k), f.b - k);
   }
 
   // ---- input ----
