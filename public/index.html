@@ -63,6 +63,8 @@
   #tabs button.on{background:var(--accent);color:#1a1a1a}
   .stepRow{display:none;gap:6px;align-items:center;flex-wrap:nowrap}
   .stepRow.show{display:flex}
+  #stab{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text)}
+  #stab button{padding:5px 8px;font-size:12px}
   .next{background:#2d3b55;border-color:#3d5378}
   #pad{height:86px;border:1px dashed #3a4252;border-radius:12px;background:repeating-linear-gradient(45deg,#1a1e26,#1a1e26 6px,#1c2129 6px,#1c2129 12px);
     touch-action:none;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;user-select:none;-webkit-user-select:none}
@@ -115,6 +117,7 @@
     <button data-da="0.1">+.1</button>
     <button data-da="1">+1°</button>
   </div>
+  <div class="stepRow" id="row-stab"><span id="stab" class="small" style="display:none"></span></div>
   <div class="stepRow" id="row-aim2">
     <span class="small">反射</span>
     <button id="bMinus">−</button>
@@ -145,7 +148,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.7';
+  const VERSION = '2.8';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -464,7 +467,7 @@
   function trace(bx, by, angDeg, pad, n) {
     const f = S.field;
     const xmin = f.l + pad, xmax = f.r - pad, ymin = f.t + pad, ymax = f.b - pad;
-    const pts = [[bx, by]]; pts.hits = new Set(); pts.kinds = [];
+    const pts = [[bx, by]]; pts.hits = new Set(); pts.kinds = []; pts.sig = [];
     if (xmin >= xmax || ymin >= ymax) return pts;
     let x = bx, y = by;
     const a = angDeg * Math.PI / 180;
@@ -509,16 +512,18 @@
       if (hitB >= 0) {
         if (flipX) dx = -dx;
         if (flipY) dy = -dy;
-        pts.kinds.push('b');
+        pts.kinds.push('b'); pts.sig.push('b' + hitB + (flipX ? 'x' : '') + (flipY ? 'y' : ''));
       } else if (hitE >= 0) {
         if (hitN.fx) dx = -dx;
         if (hitN.fy) dy = -dy; pts.hits.add(hitE); pts.kinds.push('e');
+        pts.sig.push('e' + hitE + (hitN.fx ? 'x' : '') + (hitN.fy ? 'y' : ''));
       } else {
-        const eps = 1e-6;
-        if (tx <= t + eps) dx = -dx;
-        if (ty <= t + eps) dy = -dy;
-        pts.kinds.push('w');
+        const eps = 1e-6, fx = tx <= t + eps, fy = ty <= t + eps;
+        if (fx) dx = -dx;
+        if (fy) dy = -dy;
+        pts.kinds.push('w'); pts.sig.push('w' + (fx ? (dx > 0 ? 'L' : 'R') : '') + (fy ? (dy > 0 ? 'T' : 'B') : ''));
       }
+      if (S.pierce) pts.sig.push('h' + [...pts.hits].sort().join(','));
     }
     return pts;
   }
@@ -669,6 +674,31 @@
     else if (dragInfo && dragInfo.kind !== 'pull' && dragInfo.kind !== 'pending') drawLoupe(dragInfo.sx, dragInfo.sy);
 
     document.getElementById('angle').textContent = displayAngle() + '°';
+    if (mode === 'aim' || mode === 'arrow') updateStability(); else $('stab').style.display = 'none';
+  }
+
+  // ---- stability: how far can the angle drift before the route (what it hits, in order) changes? ----
+  const STAB_STEP = 0.02, STAB_MAX = 3;
+  let stabCache = '';
+  function routeSig(ang) { return trace(S.ball.x, S.ball.y, ang, wallPad(), S.bounces).sig.join('|'); }
+  function stabRange() {
+    const ref = routeSig(S.angle); let lo = 0, hi = 0;
+    while (lo < STAB_MAX && routeSig(S.angle - lo - STAB_STEP) === ref) lo += STAB_STEP;
+    while (hi < STAB_MAX && routeSig(S.angle + hi + STAB_STEP) === ref) hi += STAB_STEP;
+    return {lo, hi};   // degrees (screen angle: + = clockwise)
+  }
+  let lastStab = null;
+  function updateStability() {
+    const key = [S.angle, S.ball.x, S.ball.y, S.bounces, S.pierce, JSON.stringify(S.enemies), JSON.stringify(S.blocks), S.r].join(';');
+    if (key !== stabCache) { stabCache = key; lastStab = stabRange(); }
+    const {lo, hi} = lastStab, m = Math.min(lo, hi), el = $('stab');
+    el.style.display = '';
+    const f = v => v >= STAB_MAX ? `${STAB_MAX}°以上` : `${v.toFixed(2)}°`;
+    const lvl = m < .15 ? ['危険', '#ff5c5c'] : m < .5 ? ['シビア', '#ffb020'] : ['安定', '#3ddc84'];
+    el.innerHTML = `<b style="color:${lvl[1]}">${lvl[0]}</b> ずれ許容 −${f(lo)} / ＋${f(hi)}` +
+      (Math.abs(hi - lo) > .06 && Math.min(lo, hi) < STAB_MAX ? ` <button id="toCenter">真ん中へ</button>` : '');
+    const b = $('toCenter');
+    if (b) b.onclick = () => { S.angle += (hi - lo) / 2; persist(); draw(); };
   }
   let padFocus = null;
 
@@ -1056,6 +1086,7 @@
     $('row-place').classList.toggle('show', step === 'place');
     $('row-aim').classList.toggle('show', step === 'aim');
     $('row-aim2').classList.toggle('show', step === 'aim');
+    $('row-stab').classList.toggle('show', step === 'aim');
     $('fieldBar').classList.toggle('show', m === 'field');
     $('mArrow').classList.toggle('on', m === 'arrow');
     pad.textContent = {ball: 'パッド：玉を少しずつ動かす', place: 'パッド：選んだ敵・ブロックを少しずつ動かす',
