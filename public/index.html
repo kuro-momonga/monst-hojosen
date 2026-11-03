@@ -98,7 +98,7 @@
     <button id="more" title="その他">⋯</button>
   </div>
   <div class="stepRow" id="row-ball">
-    <span class="small grow">画面をドラッグ／下のパッドで、点線の丸をキャラの輪に合わせる</span>
+    <span class="small grow">打つキャラをタップ → 自動で輪に合わせます。ずれたらパッドで微調整</span>
     <button class="next" data-go="place">次へ ▶</button>
   </div>
   <div class="stepRow" id="row-place">
@@ -145,7 +145,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.1';
+  const VERSION = '2.2';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -569,7 +569,35 @@
 
     document.getElementById('angle').textContent = displayAngle() + '°';
   }
-  let padFocus = null;   // image point to magnify while the trackpad is in use
+  let padFocus = null;
+
+  // ---- tap-to-snap: find the orange turn ring near the tapped point ----
+  function findRing(tx, tyy) {
+    if (!img) return null;
+    const u = IW / 1170, search = Math.round(80 * u), Rmax = Math.round(118 * u);
+    const x0 = Math.max(0, Math.round(tx - search - Rmax)), y0 = Math.max(0, Math.round(tyy - search - Rmax));
+    const w = Math.min(IW - x0, 2 * (search + Rmax)), h = Math.min(IH - y0, 2 * (search + Rmax));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, m = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2], mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+      if (mx < 150 || mx === mn || (mx - mn) / mx < .47 || mx !== r) continue;
+      const hue = 60 * (gg - b) / (mx - mn);          // red is max: hue in degrees
+      if (hue >= 16 && hue <= 60) m[i] = 1;            // orange / gold
+    }
+    const N = 120, cs = [], sn = [];
+    for (let k = 0; k < N; k++) { cs.push(Math.cos(k / N * 2 * Math.PI)); sn.push(Math.sin(k / N * 2 * Math.PI)); }
+    const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? 0 : m[(y | 0) * w + (x | 0)];
+    let best = null;
+    for (let R = Math.round(86 * u); R <= Rmax; R += 2) for (let cy = tyy - search; cy <= tyy + search; cy += 2) for (let cx = tx - search; cx <= tx + search; cx += 2) {
+      const lx = cx - x0, ly = cy - y0; let v = 0, inn = 0;
+      for (let k = 0; k < N; k++) { v += at(lx + cs[k] * R, ly + sn[k] * R); inn += at(lx + cs[k] * R * .6, ly + sn[k] * R * .6); }
+      const sc = (v - .5 * inn) / N;
+      if (!best || sc > best.s) best = {s: sc, x: cx, y: cy};
+    }
+    return best && best.s > .4 ? best : null;
+  }   // image point to magnify while the trackpad is in use
 
   // "+" buttons around the selected block: add a connected block on that side
   function plusSpots(B) {
@@ -748,8 +776,8 @@
     const [ix, iy] = toI(sx, sy);
     hint.style.display = 'none';
     if (mode === 'arrow') { dragInfo = {kind: 'tip', sx, sy}; moveTip(sx, sy); draw(); return; }
-    if (mode === 'ball') {   // drag anywhere: the ball follows the finger's movement (finger never hides it)
-      dragInfo = {kind: 'ballRel', sx, sy, lx: sx, ly: sy}; draw(); return;
+    if (mode === 'ball') {   // tap = snap to the turn ring there; drag = move relatively (finger never hides the ball)
+      dragInfo = {kind: 'ballRel', sx, sy, lx: sx, ly: sy, sx0: sx, sy0: sy, t0: performance.now()}; draw(); return;
     }
     if (mode === 'place') {
       // "+" next to the selected block
@@ -856,7 +884,15 @@
     }
     draw();
   });
-  const end = () => { if (!dragInfo) return; dragInfo = null; padFocus = null; clampBall(); persist(); draw(); };
+  const end = () => {
+    if (!dragInfo) return;
+    const di = dragInfo;
+    if (di.kind === 'ballRel' && Math.hypot(di.sx - di.sx0, di.sy - di.sy0) < 8) {
+      const [ix, iy] = toI(di.sx0, di.sy0), r = findRing(ix, iy);
+      if (r) { S.ball.x = r.x; S.ball.y = r.y; toast('キャラの輪に合わせました', 1500); }
+      else { S.ball.x = ix; S.ball.y = iy; toast('輪が見つからないのでタップした位置に置きました', 2200); }
+    }
+    dragInfo = null; padFocus = null; clampBall(); persist(); draw(); };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
 
@@ -903,7 +939,7 @@
 
   // ---- steps ----
   const HINTS = {
-    ball: '① 玉：画面をドラッグかパッドで、点線の丸をキャラの輪に合わせる',
+    ball: '① 玉：自分のキャラをタップ（輪に自動で合わせる）／ずれたらドラッグ・パッドで微調整',
     place: '② 配置：タップで置く／ドラッグで移動／ブロックを選ぶと＋で追加',
     aim: '③ 狙う：引っ張って角度を決める／パッドを左右で微調整',
     arrow: '矢印：角度は固定。なぞって矢印の先に合う目印を探す',
