@@ -41,41 +41,58 @@
   .grow{flex:1}
   input[type=file]{display:none}
   .small{font-size:11px;color:var(--muted)}
+  #panel{position:relative}
+  #menu{display:none;position:absolute;right:10px;bottom:calc(100% + 6px);width:230px;background:#1f232c;
+    border:1px solid var(--line);border-radius:12px;padding:8px;flex-direction:column;gap:6px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:5}
+  #menu.open{display:flex}
+  #menu button{text-align:left;width:100%;padding:11px 10px}
+  #menu label.sl{padding:4px 2px}
+  #fieldBar{display:none;position:absolute;left:50%;bottom:12px;transform:translateX(-50%);gap:8px}
+  #fieldBar.show{display:flex}
+  #toast{position:fixed;left:50%;bottom:150px;transform:translateX(-50%);background:rgba(20,22,28,.95);
+    border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:10px;font-size:13px;
+    display:none;align-items:center;gap:10px;z-index:9;white-space:nowrap}
+  #toast.show{display:flex}
 </style>
 </head>
 <body>
 <div id="stage">
   <canvas id="cv"></canvas>
   <div id="hint">玉をドラッグで移動／それ以外をタッチで方向</div>
+  <div id="fieldBar"><button id="resetField">↺ 初期位置</button><button id="fieldDone" class="on">完了</button></div>
 </div>
 <div id="panel">
   <div class="row" style="flex-wrap:nowrap;gap:5px">
-    <label class="btn" for="file">📷 画像</label>
+    <button id="paste" title="クリップボードの画像を取り込む">📋 画像</button>
     <input id="file" type="file" accept="image/*">
-    <div class="seg">
-      <button id="mAim" class="on">照準</button>
-      <button id="mField">枠調整</button>
-    </div>
-    <button id="pull" title="モンストと同じく引っ張った逆方向に飛ぶ">引っ張り</button>
-    <button id="pin">固定</button>
-    <button id="clearPins" title="固定した線を消す">✕</button>
-  </div>
-  <div class="row">
+    <span class="grow"></span>
     <button data-da="-1">−1°</button>
     <button data-da="-0.1">−.1</button>
     <span id="angle">0.0°</span>
     <button data-da="0.1">+.1</button>
     <button data-da="1">+1°</button>
-    <span class="grow"></span>
-    <button id="resetField" style="display:none" title="枠を初期位置に戻す">↺枠</button>
-    <button id="width" class="on">玉幅</button>
-    <span class="small" id="ver">v1.1</span>
   </div>
-  <div class="row" style="flex-wrap:nowrap;gap:16px">
-    <label class="sl">反射 <input id="bounces" type="range" min="1" max="15" value="5"><b id="bv">5</b></label>
-    <label class="sl">玉 <input id="radius" type="range" min="10" max="195" value="80"><b id="rv">62</b></label>
+  <div class="row" style="flex-wrap:nowrap;gap:5px">
+    <span class="small">反射</span>
+    <button id="bMinus">−</button>
+    <b id="bv" style="min-width:22px;text-align:center;font-size:15px">5</b>
+    <button id="bPlus">＋</button>
+    <span class="grow"></span>
+    <button id="pin">固定</button>
+    <button id="clearPins" title="固定した線を消す">✕</button>
+    <button id="more" title="その他">⋯</button>
+  </div>
+  <div id="menu">
+    <button id="pickPhoto">🖼 写真から選ぶ</button>
+    <button id="mField">枠を調整する</button>
+    <button id="width">玉の通り道を表示</button>
+    <button id="pull">引っ張り操作</button>
+    <label class="sl">玉サイズ <input id="radius" type="range" min="10" max="195" value="80"><b id="rv">80</b></label>
+    <div class="small" style="text-align:right">v1.2</div>
   </div>
 </div>
+<div id="toast"></div>
 
 <script>
 (() => {
@@ -221,7 +238,7 @@
       for (let gx = 0; gx <= IW; gx += 90) { const [a] = toS(gx, 0); ctx.beginPath(); ctx.moveTo(a, y0); ctx.lineTo(a, y0 + IH * scale); ctx.stroke(); }
       for (let gy = 0; gy <= IH; gy += 90) { const [, b] = toS(0, gy); ctx.beginPath(); ctx.moveTo(x0, b); ctx.lineTo(x0 + IW * scale, b); ctx.stroke(); }
       ctx.fillStyle = '#5b6475'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('「📷 画像」でステージのスクショを読み込み', w / 2, y0 + 200 * scale);
+      ctx.fillText('スクショを「コピー」→「📋 画像」で読み込み', w / 2, y0 + 200 * scale);
     }
 
     // field
@@ -383,18 +400,23 @@
 
   // ---- controls ----
   const $ = id => document.getElementById(id);
+  const menu = $('menu');
+  const closeMenu = () => menu.classList.remove('open');
+  $('more').onclick = e => { e.stopPropagation(); menu.classList.toggle('open'); };
+  document.addEventListener('pointerdown', e => {
+    if (menu.classList.contains('open') && !menu.contains(e.target) && e.target !== $('more')) closeMenu();
+  });
+
   function setMode(m) {
     mode = m;
-    $('mAim').classList.toggle('on', m === 'aim');
-    $('mField').classList.toggle('on', m === 'field');
-    $('resetField').style.display = m === 'field' ? '' : 'none';
+    $('fieldBar').classList.toggle('show', m === 'field');
     hint.style.display = '';
     hint.textContent = m === 'aim' ? '玉をドラッグで移動／それ以外をタッチで方向'
-                                   : '赤枠の辺・角をドラッグで調整（終わったら「照準」に戻る）';
+                                   : '赤枠の辺・角をドラッグで調整';
     layout();
   }
-  $('mAim').onclick = () => setMode('aim');
-  $('mField').onclick = () => setMode(mode === 'field' ? 'aim' : 'field');
+  $('mField').onclick = () => { closeMenu(); setMode('field'); };
+  $('fieldDone').onclick = () => setMode('aim');
   $('resetField').onclick = () => {
     S.field = {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH};
     persist(); layout();
@@ -405,17 +427,43 @@
   });
 
   const syncUI = () => {
-    $('bounces').value = S.bounces; $('bv').textContent = S.bounces;
+    $('bv').textContent = S.bounces;
     $('radius').value = Math.round(S.r); $('rv').textContent = Math.round(S.r);
     $('pull').classList.toggle('on', S.pull);
     $('width').classList.toggle('on', S.showWidth);
   };
-  $('bounces').oninput = e => { S.bounces = +e.target.value; $('bv').textContent = S.bounces; persist(); draw(); };
+  const setBounces = n => { S.bounces = Math.max(1, Math.min(20, n)); syncUI(); persist(); draw(); };
+  $('bMinus').onclick = () => setBounces(S.bounces - 1);
+  $('bPlus').onclick = () => setBounces(S.bounces + 1);
   $('radius').oninput = e => { S.r = +e.target.value; $('rv').textContent = S.r; clampBall(); persist(); layout(); };
   $('pull').onclick = () => { S.pull = !S.pull; S.angle += 180; syncUI(); persist(); draw(); };
   $('width').onclick = () => { S.showWidth = !S.showWidth; syncUI(); persist(); draw(); };
   $('pin').onclick = () => { S.pins.push({x: S.ball.x, y: S.ball.y, angle: S.angle, r: S.r, bounces: S.bounces}); draw(); };
   $('clearPins').onclick = () => { S.pins = []; draw(); };
+
+  // toast
+  let toastTimer;
+  function toast(html, ms = 4000) {
+    const t = $('toast'); t.innerHTML = html; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+    const b = t.querySelector('button'); if (b) b.onclick = () => { t.classList.remove('show'); $('file').click(); };
+  }
+
+  // 📋 画像: read the latest copied image (screenshot → コピーして削除)
+  $('paste').onclick = async () => {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('unsupported');
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const type = it.types.find(t => t.startsWith('image/'));
+        if (type) { const blob = await it.getType(type); loadFile(new File([blob], 'clip', {type})); return; }
+      }
+      toast('コピーされた画像がありません <button>写真から選ぶ</button>');
+    } catch (e) {
+      toast('画像を読み込めませんでした <button>写真から選ぶ</button>');
+    }
+  };
+  $('pickPhoto').onclick = () => { closeMenu(); $('file').click(); };
 
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
@@ -434,7 +482,7 @@
     };
     im.src = url;
   }
-  $('file').onchange = e => loadFile(e.target.files[0]);
+  $('file').onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; };
   window.addEventListener('paste', e => {
     const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
     if (it) loadFile(it.getAsFile());
