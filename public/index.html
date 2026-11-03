@@ -145,7 +145,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.4';
+  const VERSION = '2.5';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -415,6 +415,29 @@
   const toS = (x, y) => [ox + x * scale, oy + y * scale];
   const toI = (sx, sy) => [(sx - ox) / scale, (sy - oy) / scale];
 
+  // ---- enemy hitbox: "カクカクの丸" = octagon (flat faces up/down/left/right + diagonals) ----
+  // Guide-item video: reflections off an enemy only came back with a few fixed normals
+  // (≈90°, ≈45°, ≈150°, ≈175°), i.e. flat faces, not a circle. e.R = apothem (centre to flat face).
+  const OCT = [...Array(8)].map((_, i) => [Math.cos(i * Math.PI / 4), Math.sin(i * Math.PI / 4)]);   // face normals
+  function rayOct(x, y, dx, dy, e, pad) {   // Cyrus–Beck ray vs convex octagon of apothem e.R + pad
+    const A = e.R + pad; let tin = -Infinity, tout = Infinity, n = null;
+    for (const [nx, ny] of OCT) {
+      const num = A - ((x - e.x) * nx + (y - e.y) * ny), den = dx * nx + dy * ny;
+      if (Math.abs(den) < 1e-12) { if (num < 0) return null; continue; }
+      const tt = num / den;
+      if (den < 0) { if (tt > tin) { tin = tt; n = [nx, ny]; } } else if (tt < tout) tout = tt;
+      if (tin > tout) return null;
+    }
+    if (tin < 0 || !n) return null;   // starting inside: ignore
+    return {t: tin, n};
+  }
+  function octPath(cx, cy, A) {   // A in screen px (apothem)
+    const Rv = A / Math.cos(Math.PI / 8);
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; ctx[i ? 'lineTo' : 'moveTo'](cx + Rv * Math.cos(a), cy + Rv * Math.sin(a)); }
+    ctx.closePath();
+  }
+
   // ---- reflection ----
   // returns points; pts.hits = indices of enemies touched, pts.kinds[i] = 'w' | 'e' for each bounce
   function trace(bx, by, angDeg, pad, n) {
@@ -430,17 +453,11 @@
       const tx = dx > 1e-9 ? (xmax - x) / dx : dx < -1e-9 ? (xmin - x) / dx : Infinity;
       const ty = dy > 1e-9 ? (ymax - y) / dy : dy < -1e-9 ? (ymin - y) / dy : Infinity;
       let t = Math.max(0, Math.min(tx, ty)), hitE = -1;
+      let hitN = null;
       if (!S.pierce) {
         E.forEach((e, k) => {
-          const R = e.R + rb, fx = x - e.x, fy = y - e.y;
-          const c = fx * fx + fy * fy - R * R;
-          if (c <= 0) return;                       // starting inside: ignore
-          const bq = fx * dx + fy * dy;
-          if (bq >= 0) return;                      // moving away
-          const disc = bq * bq - c;
-          if (disc < 0) return;
-          const th = -bq - Math.sqrt(disc);
-          if (th > 1e-6 && th < t) { t = th; hitE = k; }
+          const h = rayOct(x, y, dx, dy, e, rb);
+          if (h && h.t > 1e-6 && h.t < t) { t = h.t; hitE = k; hitN = h.n; }
         });
       }
       let hitB = -1, flipX = false, flipY = false;
@@ -464,7 +481,8 @@
       if (S.pierce) E.forEach((e, k) => {               // pass-through: mark every enemy the segment touches
         const sx = x - x0, sy = y - y0, L2 = sx * sx + sy * sy || 1;
         const u = Math.max(0, Math.min(1, ((e.x - x0) * sx + (e.y - y0) * sy) / L2));
-        if (Math.hypot(x0 + sx * u - e.x, y0 + sy * u - e.y) <= e.R + rb) pts.hits.add(k);
+        const L = Math.hypot(sx, sy) || 1, h = rayOct(x0, y0, sx / L, sy / L, e, rb);
+        if (h && h.t <= L) pts.hits.add(k);
       });
       pts.push([x, y]);
       if (hitB >= 0) {
@@ -472,7 +490,7 @@
         if (flipY) dy = -dy;
         pts.kinds.push('b');
       } else if (hitE >= 0) {
-        const e = E[hitE], R = e.R + rb, nx = (x - e.x) / R, ny = (y - e.y) / R, dot = dx * nx + dy * ny;
+        const [nx, ny] = hitN, dot = dx * nx + dy * ny;
         dx -= 2 * dot * nx; dy -= 2 * dot * ny; pts.hits.add(hitE); pts.kinds.push('e');
       } else {
         const eps = 1e-6;
@@ -790,7 +808,7 @@
     ctx.save();
     S.enemies.forEach((e, k) => {
       const [x, y] = toS(e.x, e.y), R = e.R * scale, hit = hits.has(k), sel = mode === 'place' && (k === selEnemy || (selEnemy >= 0 && S.enemies[selEnemy] && e.g != null && e.g === S.enemies[selEnemy].g));
-      ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2);
+      octPath(x, y, R);
       ctx.fillStyle = hit ? 'rgba(255,70,120,.32)' : 'rgba(255,70,120,.10)'; ctx.fill();
       ctx.setLineDash(sel ? [6, 4] : []);
       ctx.lineWidth = hit || sel ? 3 : 2; ctx.strokeStyle = hit ? '#ff4d88' : 'rgba(255,120,160,.85)'; ctx.stroke();
