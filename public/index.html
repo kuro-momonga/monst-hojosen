@@ -148,7 +148,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.12';
+  const VERSION = '2.13';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -475,6 +475,12 @@
     const a = angDeg * Math.PI / 180;
     let dx = Math.cos(a), dy = Math.sin(a);
     const E = S.enemies, rb = S.r;
+    // A ball that starts touching a block just leaves it (blocks only; enemies still collide).
+    const tol = 10 * IW / 1170, skipB = new Set();
+    S.blocks.forEach((B, k) => {
+      const l = Math.min(B.l, B.r) - rb - tol, r = Math.max(B.l, B.r) + rb + tol, t = Math.min(B.t, B.b) - rb - tol, b = Math.max(B.t, B.b) + rb + tol;
+      if (bx > l && bx < r && by > t && by < b) skipB.add(k);
+    });
     for (let i = 0; i <= n; i++) {
       const tx = dx > 1e-9 ? (xmax - x) / dx : dx < -1e-9 ? (xmin - x) / dx : Infinity;
       const ty = dy > 1e-9 ? (ymax - y) / dy : dy < -1e-9 ? (ymin - y) / dy : Infinity;
@@ -488,6 +494,7 @@
       }
       let hitB = -1, flipX = false, flipY = false;
       S.blocks.forEach((B, k) => {
+        if (i === 0 && skipB.has(k)) return;
         const rb2 = S.r, l = Math.min(B.l, B.r) - rb2, r = Math.max(B.l, B.r) + rb2, tp = Math.min(B.t, B.b) - rb2, bt = Math.max(B.t, B.b) + rb2;
         if (x > l && x < r && y > tp && y < bt) return;       // starting inside: ignore
         let txn, txf, tyn, tyf;
