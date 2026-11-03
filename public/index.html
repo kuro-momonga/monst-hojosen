@@ -54,45 +54,83 @@
   #enemyBar.show{display:flex}
   #enemyBar button{padding:8px 8px}
   #enemyBar .seg{background:#181b22}
-  #toast{position:fixed;left:50%;bottom:150px;transform:translateX(-50%);background:rgba(20,22,28,.95);
+  #toast{position:fixed;left:50%;top:calc(52px + env(safe-area-inset-top));transform:translateX(-50%);background:rgba(20,22,28,.95);
     border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:10px;font-size:13px;
     display:none;align-items:center;gap:10px;z-index:9;white-space:nowrap}
   #toast.show{display:flex}
+  #tabs{display:flex;gap:4px;flex:1}
+  #tabs button{flex:1;padding:9px 4px;background:#1c2029}
+  #tabs button.on{background:var(--accent);color:#1a1a1a}
+  .stepRow{display:none;gap:6px;align-items:center;flex-wrap:nowrap}
+  .stepRow.show{display:flex}
+  .next{background:#2d3b55;border-color:#3d5378}
+  #pad{height:86px;border:1px dashed #3a4252;border-radius:12px;background:repeating-linear-gradient(45deg,#1a1e26,#1a1e26 6px,#1c2129 6px,#1c2129 12px);
+    touch-action:none;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;user-select:none;-webkit-user-select:none}
+  #pad.active{border-color:var(--accent);color:var(--text)}
+  #modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:20;align-items:flex-end;justify-content:center}
+  #modal.show{display:flex}
+  #sheet{background:#1b1f27;border-top-left-radius:16px;border-top-right-radius:16px;width:100%;max-width:520px;max-height:85%;overflow:auto;
+    padding:14px 14px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
+  #sheet h3{margin:2px 0 4px;font-size:16px}
+  #sheet .q{border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px}
+  #sheet .qh{display:flex;align-items:center;gap:6px}
+  #sheet .qh b{flex:1;font-size:14px}
+  #sheet .st{display:flex;align-items:center;gap:6px;padding-left:6px}
+  #sheet .st span{flex:1;color:var(--muted)}
+  #sheet input[type=text],#sheet textarea{width:100%;background:#11141a;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;font-size:14px}
+  #sheet textarea{height:120px;font-size:11px}
+  .danger{color:#ff8a8a}
+  #stageLabel{position:absolute;right:8px;top:8px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:4px 8px;border-radius:8px;pointer-events:none;display:none}
 </style>
 </head>
 <body>
 <div id="stage">
   <canvas id="cv"></canvas>
-  <div id="hint">引っ張って狙う／玉を長押しで移動</div>
+  <div id="hint"></div>
+  <div id="stageLabel"></div>
   <div id="fieldBar"><button id="resetField">↺ 初期位置</button><button id="fieldDone" class="on">完了</button></div>
-  <div id="enemyBar" class="bar"><div class="seg"><button id="shCircle" class="on">● 敵</button><button id="shRect">■ ブロック</button></div><button id="eDel">削除</button><button id="eClear">全消し</button><button id="enemyDone" class="on">完了</button></div>
 </div>
 <div id="panel">
   <div class="row" style="flex-wrap:nowrap;gap:5px">
-    <button id="paste" title="クリップボードの画像を取り込む">📋 画像</button>
+    <button id="btnImg">🖼 画像</button>
     <input id="file" type="file" accept="image/*">
+    <div id="tabs"><button data-step="ball">① 玉</button><button data-step="place">② 配置</button><button data-step="aim">③ 狙う</button></div>
+    <button id="more" title="その他">⋯</button>
+  </div>
+  <div class="stepRow" id="row-ball">
+    <span class="small grow">画面をドラッグ／下のパッドで、点線の丸をキャラの輪に合わせる</span>
+    <button class="next" data-go="place">次へ ▶</button>
+  </div>
+  <div class="stepRow" id="row-place">
+    <div class="seg"><button id="shCircle" class="on">● 敵</button><button id="shRect">■ ブロック</button></div>
+    <button id="szMinus" title="敵を小さく">−</button><button id="szPlus" title="敵を大きく">＋</button>
+    <button id="eDel">削除</button>
     <span class="grow"></span>
+    <button class="next" data-go="aim">次へ ▶</button>
+  </div>
+  <div class="stepRow" id="row-aim">
     <button data-da="-1">−1°</button>
     <button data-da="-0.1">−.1</button>
     <span id="angle">0.0°</span>
     <button data-da="0.1">+.1</button>
     <button data-da="1">+1°</button>
   </div>
-  <div class="row" style="flex-wrap:nowrap;gap:5px">
+  <div class="stepRow" id="row-aim2">
     <span class="small">反射</span>
     <button id="bMinus">−</button>
     <b id="bv" style="min-width:22px;text-align:center;font-size:15px">5</b>
     <button id="bPlus">＋</button>
     <span class="grow"></span>
-    <button id="mEnemy">敵・壁</button>
     <button id="mArrow">矢印</button>
     <button id="pin">固定</button>
-    <button id="more" title="その他">⋯</button>
   </div>
+  <div id="pad">パッド</div>
   <div id="menu">
-    <button id="pickPhoto">🖼 写真から選ぶ</button>
-    <button id="clearPins">固定した線を消す</button>
+    <button id="stages">📁 ステージ保存・読み込み</button>
+    <button id="dim">画面：通常</button>
     <button id="detect">ブロックを自動検出</button>
+    <button id="eClear" class="danger">敵とブロックを全部消す</button>
+    <button id="clearPins">固定した線を消す</button>
     <button id="mField">枠を調整する</button>
     <button id="width">玉の通り道を表示</button>
     <button id="wobble">ブレ幅 ±0.5°</button>
@@ -102,11 +140,12 @@
     <div class="small" style="text-align:right" id="ver"></div>
   </div>
 </div>
+<div id="modal"><div id="sheet"></div></div>
 <div id="toast"></div>
 
 <script>
 (() => {
-  const VERSION = '1.15';
+  const VERSION = '2.0';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -246,7 +285,7 @@
   function runDetect(quiet) {
     const t0 = performance.now(), B = detectBlocks();
     S.blocks = B; persist(); draw();
-    if (!quiet || B.length) toast(`ブロックを${B.length}個見つけました（「敵・壁」で直せます）`, 3000);
+    if (!quiet || B.length) toast(`ブロックを${B.length}個見つけました（「② 配置」で直せます）`, 3000);
   }   // radius of the orange turn ring (measured ~97-112)
   const wallPad = () => WALL_PAD * IW;
   const S = {
@@ -261,15 +300,16 @@
     bounces: 5,
     pointAim: false,   // false = Monst-style pull (default), true = touch the target direction
     showWidth: true,
+    dim: false,
     pins: []
   };
-  let mode = 'aim';
+  let mode = 'ball';
 
   // restore light prefs
   const toRatio = () => ({
     field: {l: S.field.l / IW, t: S.field.t / IH, r: S.field.r / IW, b: S.field.b / IH},
     ball: {x: S.ball.x / IW, y: S.ball.y / IH},
-    r: S.r / IW, angle: S.angle, bounces: S.bounces, pointAim: S.pointAim, showWidth: S.showWidth, pierce: S.pierce,
+    r: S.r / IW, angle: S.angle, bounces: S.bounces, pointAim: S.pointAim, showWidth: S.showWidth, pierce: S.pierce, dim: S.dim,
     enemies: S.enemies.map(e => ({x: e.x / IW, y: e.y / IH, R: e.R / IW})),
     blocks: S.blocks.map(b => ({l: b.l / IW, r: b.r / IW, t: b.t / IH, b: b.b / IH})), wobble: S.wobble
   });
@@ -277,7 +317,7 @@
     if (R.field) S.field = {l: R.field.l * IW, t: R.field.t * IH, r: R.field.r * IW, b: R.field.b * IH};
     if (R.ball) S.ball = {x: R.ball.x * IW, y: R.ball.y * IH};
     if (R.r) S.r = R.r * IW;
-    ['angle', 'bounces', 'pointAim', 'showWidth', 'pierce'].forEach(k => { if (k in R) S[k] = R[k]; });
+    ['angle', 'bounces', 'pointAim', 'showWidth', 'pierce', 'dim'].forEach(k => { if (k in R) S[k] = R[k]; });
     if ('wobble' in R) S.wobble = R.wobble;
     if (Array.isArray(R.blocks)) S.blocks = R.blocks.map(b => ({l: b.l * IW, r: b.r * IW, t: b.t * IH, b: b.b * IH}));
     if (Array.isArray(R.enemies)) S.enemies = R.enemies.map(e => ({x: e.x * IW, y: e.y * IH, R: e.R * IW}));
@@ -454,13 +494,14 @@
     const [x0, y0] = toS(0, 0);
     if (img) {
       ctx.drawImage(img, x0, y0, IW * scale, IH * scale);
+      if (S.dim) { ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x0, y0, IW * scale, IH * scale); }
     } else {
       ctx.fillStyle = '#151922'; ctx.fillRect(x0, y0, IW * scale, IH * scale);
       ctx.strokeStyle = '#1f2531'; ctx.lineWidth = 1;
       for (let gx = 0; gx <= IW; gx += 90) { const [a] = toS(gx, 0); ctx.beginPath(); ctx.moveTo(a, y0); ctx.lineTo(a, y0 + IH * scale); ctx.stroke(); }
       for (let gy = 0; gy <= IH; gy += 90) { const [, b] = toS(0, gy); ctx.beginPath(); ctx.moveTo(x0, b); ctx.lineTo(x0 + IW * scale, b); ctx.stroke(); }
       ctx.fillStyle = '#5b6475'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('スクショを「コピー」→「📋 画像」で読み込み', w / 2, y0 + 200 * scale);
+      ctx.fillText('「🖼 画像」でステージのスクショを選ぶ', w / 2, y0 + 200 * scale);
     }
 
     // field
@@ -490,6 +531,8 @@
     if (S.wobble > 0) [-S.wobble, S.wobble].forEach(w => drawWobble(trace(S.ball.x, S.ball.y, S.angle + w, wallPad(), S.bounces)));
     drawPath(pts);
 
+    if (mode === 'place' && selBlock >= 0 && S.blocks[selBlock]) drawPlusHandles(S.blocks[selBlock]);
+
     // ball
     const [bx, by] = toS(S.ball.x, S.ball.y);
     ctx.save();
@@ -511,16 +554,35 @@
       ctx.restore();
     }
     // ball being moved (after long-press)
-    if (dragInfo && dragInfo.kind === 'ball') {
+    if ((dragInfo && dragInfo.kind === 'ball') || mode === 'ball') {
       ctx.save(); ctx.strokeStyle = '#ffd43b'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(bx, by, Math.max(S.r * scale, 14) + 6, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
     }
 
     // loupe while dragging
     if (mode === 'arrow') drawArrowMode(pts);
+    else if (padFocus) { const [fx, fy] = toS(padFocus[0], padFocus[1]); drawLoupe(fx, fy); }
     else if (dragInfo && dragInfo.kind !== 'pull' && dragInfo.kind !== 'pending') drawLoupe(dragInfo.sx, dragInfo.sy);
 
     document.getElementById('angle').textContent = displayAngle() + '°';
+  }
+  let padFocus = null;   // image point to magnify while the trackpad is in use
+
+  // "+" buttons around the selected block: add a connected block on that side
+  function plusSpots(B) {
+    const W = BLOCK * IW, cx = B.l + W / 2, cy = B.t + W / 2;
+    return [[cx - W, cy, -W, 0], [cx + W, cy, W, 0], [cx, cy - W, 0, -W], [cx, cy + W, 0, W]]
+      .filter(([, , dx, dy]) => !S.blocks.some(o => Math.abs(o.l - (B.l + dx)) < 2 && Math.abs(o.t - (B.t + dy)) < 2));
+  }
+  function drawPlusHandles(B) {
+    ctx.save();
+    for (const [x, y] of plusSpots(B)) {
+      const [sx, sy] = toS(x, y);
+      ctx.fillStyle = 'rgba(120,200,255,.95)'; ctx.beginPath(); ctx.arc(sx, sy, 13, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#0f1115'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(sx - 6, sy); ctx.lineTo(sx + 6, sy); ctx.moveTo(sx, sy - 6); ctx.lineTo(sx, sy + 6); ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function displayAngle() {
@@ -617,7 +679,7 @@
     // draw top rows first so lower blocks overlap the base of the ones above (like the game)
     S.blocks.map((B, k) => [B, k]).sort((a, b) => a[0].t - b[0].t).forEach(([B, k]) => {
       const [x1, y1] = toS(B.l, B.t), [x2, y2] = toS(B.r, B.b), w = x2 - x1, h = y2 - y1;
-      const sel = mode === 'enemy' && k === selBlock;
+      const sel = mode === 'place' && k === selBlock;
       if (blockImg.complete && blockImg.naturalWidth) {
         // sprite: 136x156 drawn inside the 146 cell (5px margin, base shadow hangs below)
         const sc = w / 146.25;
@@ -634,13 +696,13 @@
   function drawEnemies(hits) {
     ctx.save();
     S.enemies.forEach((e, k) => {
-      const [x, y] = toS(e.x, e.y), R = e.R * scale, hit = hits.has(k), sel = mode === 'enemy' && k === selEnemy;
+      const [x, y] = toS(e.x, e.y), R = e.R * scale, hit = hits.has(k), sel = mode === 'place' && k === selEnemy;
       ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2);
       ctx.fillStyle = hit ? 'rgba(255,70,120,.32)' : 'rgba(255,70,120,.10)'; ctx.fill();
       ctx.setLineDash(sel ? [6, 4] : []);
       ctx.lineWidth = hit || sel ? 3 : 2; ctx.strokeStyle = hit ? '#ff4d88' : 'rgba(255,120,160,.85)'; ctx.stroke();
       ctx.setLineDash([]);
-      if (mode === 'enemy') {
+      if (mode === 'place') {
         ctx.fillStyle = '#ff4d88';
         ctx.beginPath(); ctx.arc(x + R, y, 7, 0, Math.PI * 2); ctx.fill();   // resize handle
         ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
@@ -674,43 +736,63 @@
   }
 
   let selEnemy = -1, selBlock = -1, lastEnemyR = 95 / 1170 * IW, editShape = 'circle';
+  const $ = id => document.getElementById(id);
+
   cv.addEventListener('pointerdown', e => {
     cv.setPointerCapture(e.pointerId);
+    closeMenu();
     const [sx, sy] = pos(e);
-    if (mode === 'arrow') {
-      dragInfo = {kind: 'tip', sx, sy}; moveTip(sx, sy); hint.style.display = 'none'; draw(); return;
+    const [ix, iy] = toI(sx, sy);
+    hint.style.display = 'none';
+    if (mode === 'arrow') { dragInfo = {kind: 'tip', sx, sy}; moveTip(sx, sy); draw(); return; }
+    if (mode === 'ball') {   // drag anywhere: the ball follows the finger's movement (finger never hides it)
+      dragInfo = {kind: 'ballRel', sx, sy, lx: sx, ly: sy}; draw(); return;
     }
-    if (mode === 'enemy') {
-      const [ix, iy] = toI(sx, sy);
-      // blocks: fixed-size stamps (same size in every stage). Tap inside = move, tap empty (block tool) = place
-      for (let i = S.blocks.length - 1; i >= 0; i--) {
-        const B = S.blocks[i];
-        if (ix > B.l && ix < B.r && iy > B.t && iy < B.b && (editShape === 'rect' || true)) {
-          selBlock = i; selEnemy = -1;
-          dragInfo = {kind: 'block', k: i, off: [B.l - ix, B.t - iy], sx, sy}; hint.style.display = 'none'; draw(); return;
+    if (mode === 'place') {
+      // "+" next to the selected block
+      if (selBlock >= 0 && S.blocks[selBlock]) {
+        const B = S.blocks[selBlock];
+        for (const [x, y, dx, dy] of plusSpots(B)) {
+          const [hx, hy] = toS(x, y);
+          if (Math.hypot(sx - hx, sy - hy) < 20) {
+            S.blocks.push({l: B.l + dx, t: B.t + dy, r: B.r + dx, b: B.b + dy}); selBlock = S.blocks.length - 1; selEnemy = -1;
+            persist(); syncUI(); draw(); return;
+          }
         }
       }
+      // existing block?
+      for (let i = S.blocks.length - 1; i >= 0; i--) {
+        const B = S.blocks[i];
+        if (ix > B.l && ix < B.r && iy > B.t && iy < B.b && editShape === 'rect') {
+          selBlock = i; selEnemy = -1;
+          dragInfo = {kind: 'block', k: i, off: [B.l - ix, B.t - iy], sx, sy}; syncUI(); draw(); return;
+        }
+      }
+      // existing enemy?
+      for (let i = S.enemies.length - 1; i >= 0; i--) {
+        const en = S.enemies[i], [ex, ey] = toS(en.x, en.y), R = en.R * scale, d = Math.hypot(sx - ex, sy - ey);
+        if (Math.hypot(sx - (ex + R), sy - ey) < 22 || Math.abs(d - R) < 12) {
+          selEnemy = i; selBlock = -1; dragInfo = {kind: 'enemy', how: 'resize', k: i, sx, sy, sx0: sx, sy0: sy}; syncUI(); draw(); return;
+        }
+        if (d < R) { selEnemy = i; selBlock = -1; dragInfo = {kind: 'enemy', how: 'move', k: i, off: [en.x - ix, en.y - iy], sx, sy}; syncUI(); draw(); return; }
+      }
+      // block under finger while the enemy tool is active: just select it (enemies are often drawn over blocks)
+      for (let i = S.blocks.length - 1; i >= 0; i--) {
+        const B = S.blocks[i];
+        if (ix > B.l && ix < B.r && iy > B.t && iy < B.b) {
+          selBlock = i; selEnemy = -1; dragInfo = {kind: 'block', k: i, off: [B.l - ix, B.t - iy], sx, sy}; syncUI(); draw(); return;
+        }
+      }
+      // empty: place a new one
       if (editShape === 'rect') {
         const W = BLOCK * IW;
         S.blocks.push(placeBlock(ix - W / 2, iy - W / 2)); selBlock = S.blocks.length - 1; selEnemy = -1;
-        dragInfo = {kind: 'block', k: selBlock, off: [-W / 2, -W / 2], sx, sy}; hint.style.display = 'none'; draw(); return;
+        dragInfo = {kind: 'block', k: selBlock, off: [-W / 2, -W / 2], sx, sy};
+      } else {
+        S.enemies.push({x: ix, y: iy, R: lastEnemyR}); selEnemy = S.enemies.length - 1; selBlock = -1;
+        dragInfo = {kind: 'enemy', how: 'new', k: selEnemy, off: [0, 0], sx, sy, sx0: sx, sy0: sy};
       }
-      selBlock = -1;
-      let k = -1, how = '';
-      // resize handle / ring first, then inside (topmost = last)
-      for (let i = S.enemies.length - 1; i >= 0; i--) {
-        const en = S.enemies[i], [ex, ey] = toS(en.x, en.y), R = en.R * scale, d = Math.hypot(sx - ex, sy - ey);
-        if (Math.hypot(sx - (ex + R), sy - ey) < 22 || Math.abs(d - R) < 14) { k = i; how = 'resize'; break; }
-        if (d < R) { k = i; how = 'move'; break; }
-      }
-      if (k < 0) {
-        S.enemies.push({x: ix, y: iy, R: lastEnemyR}); k = S.enemies.length - 1; how = 'new';
-      }
-      selEnemy = k;
-      const en = S.enemies[k];
-      dragInfo = {kind: 'enemy', how, k, off: [en.x - ix, en.y - iy], sx, sy, sx0: sx, sy0: sy};
-      hint.style.display = 'none';
-      draw(); return;
+      syncUI(); draw(); return;
     }
     if (mode === 'field') {
       const f = S.field; const [fl, ft] = toS(f.l, f.t), [fr, fb] = toS(f.r, f.b);
@@ -723,28 +805,12 @@
       };
       const sel = Object.keys(edges).filter(k => edges[k]);
       if (sel.length) dragInfo = {kind: 'field', edges: sel, sx, sy};
-      else if (sx > fl && sx < fr && sy > ft && sy < fb) {
-        const [ix, iy] = toI(sx, sy);
-        dragInfo = {kind: 'fieldMove', start: [ix, iy], orig: {...f}, sx, sy};
-      }
-    } else {
-      const [bx, by] = toS(S.ball.x, S.ball.y);
-      const hitR = Math.max(S.r * scale, 26);
-      const [ix, iy] = toI(sx, sy);
-      const onBall = Math.hypot(sx - bx, sy - by) < hitR;
-      if (S.pointAim) {
-        if (onBall) dragInfo = {kind: 'ball', off: [S.ball.x - ix, S.ball.y - iy], sx, sy};
-        else { dragInfo = {kind: 'aim', sx, sy}; setAimFrom(sx, sy); }
-      } else {
-        // Monst-style: drag anywhere = pull. Long-press on the ball = move the ball.
-        dragInfo = {kind: onBall ? 'pending' : 'pull', sx, sy, sx0: sx, sy0: sy, off: [S.ball.x - ix, S.ball.y - iy]};
-        if (onBall) {
-          const d = dragInfo;
-          d.timer = setTimeout(() => { if (dragInfo === d && d.kind === 'pending') { d.kind = 'ball'; draw(); } }, 350);
-        }
-      }
+      else if (sx > fl && sx < fr && sy > ft && sy < fb) dragInfo = {kind: 'fieldMove', start: [ix, iy], orig: {...f}, sx, sy};
+      draw(); return;
     }
-    hint.style.display = 'none';
+    // aim
+    if (S.pointAim) { dragInfo = {kind: 'aim', sx, sy}; setAimFrom(sx, sy); }
+    else dragInfo = {kind: 'pull', sx, sy, sx0: sx, sy0: sy};
     draw();
   });
 
@@ -753,50 +819,78 @@
     const [sx, sy] = pos(e);
     dragInfo.sx = sx; dragInfo.sy = sy;
     const [ix, iy] = toI(sx, sy);
-    if (dragInfo.kind === 'tip') {
-      moveTip(sx, sy);
-    } else if (dragInfo.kind === 'block') {
-      S.blocks[dragInfo.k] = placeBlock(ix + dragInfo.off[0], iy + dragInfo.off[1], dragInfo.k);
-    } else if (dragInfo.kind === 'enemy') {
+    const k = dragInfo.kind;
+    if (k === 'tip') moveTip(sx, sy);
+    else if (k === 'ballRel') {
+      S.ball.x += (sx - dragInfo.lx) / scale; S.ball.y += (sy - dragInfo.ly) / scale; clampBall();
+      dragInfo.lx = sx; dragInfo.ly = sy; padFocus = [S.ball.x, S.ball.y];
+    }
+    else if (k === 'block') S.blocks[dragInfo.k] = placeBlock(ix + dragInfo.off[0], iy + dragInfo.off[1], dragInfo.k);
+    else if (k === 'enemy') {
       const en = S.enemies[dragInfo.k];
       if (dragInfo.how === 'move') { en.x = ix + dragInfo.off[0]; en.y = iy + dragInfo.off[1]; }
       else if (dragInfo.how === 'resize' || Math.hypot(sx - dragInfo.sx0, sy - dragInfo.sy0) > 12) {
         en.R = Math.max(15, Math.hypot(ix - en.x, iy - en.y)); lastEnemyR = en.R;
       }
-    } else if (dragInfo.kind === 'ball') {
-      S.ball.x = ix + dragInfo.off[0]; S.ball.y = iy + dragInfo.off[1]; clampBall();
-    } else if (dragInfo.kind === 'aim') {
-      setAimFrom(sx, sy);
-    } else if (dragInfo.kind === 'pending' || dragInfo.kind === 'pull') {
+    }
+    else if (k === 'aim') setAimFrom(sx, sy);
+    else if (k === 'pull') {
       const vx = dragInfo.sx0 - sx, vy = dragInfo.sy0 - sy;
-      if (dragInfo.kind === 'pending' && Math.hypot(vx, vy) > 10) { clearTimeout(dragInfo.timer); dragInfo.kind = 'pull'; }
-      if (dragInfo.kind === 'pull' && Math.hypot(vx, vy) > 10) S.angle = Math.atan2(vy, vx) * 180 / Math.PI;
-    } else if (dragInfo.kind === 'field') {
+      if (Math.hypot(vx, vy) > 10) S.angle = Math.atan2(vy, vx) * 180 / Math.PI;
+    }
+    else if (k === 'field') {
       const f = S.field, min = 40;
-      for (const k of dragInfo.edges) {
-        if (k === 'l') f.l = Math.min(ix, f.r - min);
-        if (k === 'r') f.r = Math.max(ix, f.l + min);
-        if (k === 't') f.t = Math.min(iy, f.b - min);
-        if (k === 'b') f.b = Math.max(iy, f.t + min);
+      for (const ed of dragInfo.edges) {
+        if (ed === 'l') f.l = Math.min(ix, f.r - min);
+        if (ed === 'r') f.r = Math.max(ix, f.l + min);
+        if (ed === 't') f.t = Math.min(iy, f.b - min);
+        if (ed === 'b') f.b = Math.max(iy, f.t + min);
       }
-    } else if (dragInfo.kind === 'fieldMove') {
+    }
+    else if (k === 'fieldMove') {
       const dx = ix - dragInfo.start[0], dy = iy - dragInfo.start[1], o = dragInfo.orig;
       Object.assign(S.field, {l: o.l + dx, r: o.r + dx, t: o.t + dy, b: o.b + dy});
     }
     draw();
   });
-
-  const end = () => {
-    if (!dragInfo) return;
-    clearTimeout(dragInfo.timer);
-
-    dragInfo = null; clampBall(); persist(); draw();
-  };
+  const end = () => { if (!dragInfo) return; dragInfo = null; padFocus = null; clampBall(); persist(); draw(); };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
 
-  // ---- controls ----
-  const $ = id => document.getElementById(id);
+  // ---- trackpad: relative, constant ratio (no acceleration) ----
+  const PAD_GAIN = 1 / 3;
+  const pad = $('pad');
+  let padLast = null, blockAcc = null;
+  pad.addEventListener('pointerdown', e => {
+    pad.setPointerCapture(e.pointerId); closeMenu(); padLast = [e.clientX, e.clientY]; pad.classList.add('active');
+    if (mode === 'place' && selBlock >= 0) { const B = S.blocks[selBlock]; blockAcc = [B.l, B.t]; }
+    hint.style.display = 'none';
+  });
+  pad.addEventListener('pointermove', e => {
+    if (!padLast) return;
+    const dx = e.clientX - padLast[0], dy = e.clientY - padLast[1]; padLast = [e.clientX, e.clientY];
+    const gx = dx / scale * PAD_GAIN, gy = dy / scale * PAD_GAIN;
+    if (mode === 'ball') { S.ball.x += gx; S.ball.y += gy; clampBall(); padFocus = [S.ball.x, S.ball.y]; }
+    else if (mode === 'place') {
+      if (selEnemy >= 0) { const en = S.enemies[selEnemy]; en.x += gx; en.y += gy; padFocus = [en.x, en.y]; }
+      else if (selBlock >= 0 && blockAcc) {
+        blockAcc[0] += gx; blockAcc[1] += gy;
+        S.blocks[selBlock] = placeBlock(blockAcc[0], blockAcc[1], selBlock);
+        padFocus = [S.blocks[selBlock].l, S.blocks[selBlock].t];
+      }
+    }
+    else if (mode === 'aim') { S.angle += dx * 0.015; }          // ~0.5° per cm
+    else if (mode === 'arrow') {
+      const a = S.angle * Math.PI / 180;
+      tipD = Math.max(S.r * 1.2, Math.min((tipD || 0) + (dx * Math.cos(a) + dy * Math.sin(a)) / scale * .5, maxTip()));
+    }
+    draw();
+  });
+  const padEnd = () => { padLast = null; padFocus = null; blockAcc = null; pad.classList.remove('active'); persist(); draw(); };
+  pad.addEventListener('pointerup', padEnd);
+  pad.addEventListener('pointercancel', padEnd);
+
+  // ---- menu ----
   const menu = $('menu');
   const closeMenu = () => menu.classList.remove('open');
   $('more').onclick = e => { e.stopPropagation(); menu.classList.toggle('open'); };
@@ -804,45 +898,57 @@
     if (menu.classList.contains('open') && !menu.contains(e.target) && e.target !== $('more')) closeMenu();
   });
 
+  // ---- steps ----
+  const HINTS = {
+    ball: '① 玉：画面をドラッグかパッドで、点線の丸をキャラの輪に合わせる',
+    place: '② 配置：タップで置く／ドラッグで移動／ブロックを選ぶと＋で追加',
+    aim: '③ 狙う：引っ張って角度を決める／パッドを左右で微調整',
+    arrow: '矢印：角度は固定。なぞって矢印の先に合う目印を探す',
+    field: '赤枠の辺・角をドラッグで調整',
+  };
   function setMode(m) {
     mode = m;
+    if (m !== 'place') { selEnemy = -1; selBlock = -1; }
+    const step = m === 'arrow' ? 'aim' : m;
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.step === step));
+    $('row-ball').classList.toggle('show', step === 'ball');
+    $('row-place').classList.toggle('show', step === 'place');
+    $('row-aim').classList.toggle('show', step === 'aim');
+    $('row-aim2').classList.toggle('show', step === 'aim');
     $('fieldBar').classList.toggle('show', m === 'field');
-    $('enemyBar').classList.toggle('show', m === 'enemy');
-    $('mEnemy').classList.toggle('on', m === 'enemy');
     $('mArrow').classList.toggle('on', m === 'arrow');
-    if (m !== 'enemy') { selEnemy = -1; selBlock = -1; }
-    hint.style.display = '';
-    hint.textContent = m === 'aim' ? (S.pointAim ? '玉をドラッグで移動／それ以外をタッチで方向' : '引っ張って狙う／玉を長押しで移動')
-                     : m === 'arrow' ? '角度は固定。線の上をなぞって、矢印の先に合う目印を探す'
-                     : m === 'enemy' ? (editShape === 'rect' ? 'タップでブロックを置く／ドラッグで移動（近くのブロックにくっつく）' : 'タップで敵を置く・引っ張って大きさ／丸の中で移動・ふちで大きさ')
-                     : '赤枠の辺・角をドラッグで調整';
-    layout();
+    pad.textContent = {ball: 'パッド：玉を少しずつ動かす', place: 'パッド：選んだ敵・ブロックを少しずつ動かす',
+                       aim: 'パッド：左右で角度を微調整', arrow: 'パッド：矢印の先を動かす', field: ''}[m];
+    hint.style.display = ''; hint.textContent = HINTS[m] || '';
+    syncUI(); layout();
   }
+  document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setMode(b.dataset.step));
+  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => setMode(b.dataset.go));
   $('mField').onclick = () => { closeMenu(); setMode('field'); };
-  $('fieldDone').onclick = () => setMode('aim');
-  $('mEnemy').onclick = () => setMode(mode === 'enemy' ? 'aim' : 'enemy');
+  $('fieldDone').onclick = () => setMode('ball');
   $('mArrow').onclick = () => setMode(mode === 'arrow' ? 'aim' : 'arrow');
-  $('enemyDone').onclick = () => setMode('aim');
   $('eDel').onclick = () => {
     if (selEnemy >= 0) S.enemies.splice(selEnemy, 1);
     else if (selBlock >= 0) S.blocks.splice(selBlock, 1);
-    selEnemy = selBlock = -1; persist(); draw();
+    selEnemy = selBlock = -1; persist(); syncUI(); draw();
   };
-  $('eClear').onclick = () => { S.enemies = []; S.blocks = []; selEnemy = selBlock = -1; persist(); draw(); };
-  const setShape = sh => { editShape = sh; $('shCircle').classList.toggle('on', sh === 'circle'); $('shRect').classList.toggle('on', sh === 'rect'); setMode('enemy'); };
+  $('eClear').onclick = () => { S.enemies = []; S.blocks = []; selEnemy = selBlock = -1; closeMenu(); persist(); syncUI(); draw(); };
+  const resizeSel = f => { if (selEnemy >= 0) { const en = S.enemies[selEnemy]; en.R = Math.max(15, en.R + f * IW / 1170); lastEnemyR = en.R; persist(); draw(); } };
+  $('szMinus').onclick = () => resizeSel(-3);
+  $('szPlus').onclick = () => resizeSel(3);
+  const setShape = sh => { editShape = sh; $('shCircle').classList.toggle('on', sh === 'circle'); $('shRect').classList.toggle('on', sh === 'rect'); };
   $('shCircle').onclick = () => setShape('circle');
   $('shRect').onclick = () => setShape('rect');
   $('wobble').onclick = () => { S.wobble = S.wobble === 0 ? 0.5 : S.wobble === 0.5 ? 1 : 0; syncUI(); persist(); draw(); };
   $('pierce').onclick = () => { S.pierce = !S.pierce; syncUI(); persist(); draw(); };
+  $('dim').onclick = () => { S.dim = !S.dim; syncUI(); persist(); draw(); };
   $('resetField').onclick = () => {
     S.field = {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH};
     persist(); layout();
   };
-
   document.querySelectorAll('[data-da]').forEach(b => {
     b.onclick = () => { S.angle += parseFloat(b.dataset.da); persist(); draw(); };
   });
-
   const syncUI = () => {
     $('bv').textContent = S.bounces;
     $('radius').value = Math.round(S.r); $('rv').textContent = Math.round(S.r);
@@ -851,12 +957,19 @@
     $('wobble').textContent = S.wobble ? `ブレ幅 ±${S.wobble}°` : 'ブレ幅 なし';
     $('wobble').classList.toggle('on', S.wobble > 0);
     $('width').classList.toggle('on', S.showWidth);
+    $('dim').textContent = S.dim ? '画面：暗め' : '画面：通常';
+    $('dim').classList.toggle('on', S.dim);
+    $('szMinus').disabled = $('szPlus').disabled = selEnemy < 0;
+    $('szMinus').style.opacity = $('szPlus').style.opacity = selEnemy < 0 ? .4 : 1;
+    $('eDel').style.opacity = (selEnemy < 0 && selBlock < 0) ? .4 : 1;
+    const lab = $('stageLabel'); lab.style.display = cur ? '' : 'none';
+    if (cur) lab.textContent = `${cur.q} / ステージ${cur.s + 1}`;
   };
   const setBounces = n => { S.bounces = Math.max(1, Math.min(20, n)); syncUI(); persist(); draw(); };
   $('bMinus').onclick = () => setBounces(S.bounces - 1);
   $('bPlus').onclick = () => setBounces(S.bounces + 1);
   $('radius').oninput = e => { S.r = +e.target.value; $('rv').textContent = S.r; clampBall(); persist(); layout(); };
-  $('pull').onclick = () => { S.pointAim = !S.pointAim; syncUI(); persist(); setMode('aim'); };
+  $('pull').onclick = () => { S.pointAim = !S.pointAim; syncUI(); persist(); };
   $('width').onclick = () => { S.showWidth = !S.showWidth; syncUI(); persist(); draw(); };
   $('pin').onclick = () => { S.pins.push({x: S.ball.x, y: S.ball.y, angle: S.angle, r: S.r, bounces: S.bounces}); draw(); };
   $('clearPins').onclick = () => { S.pins = []; closeMenu(); draw(); };
@@ -867,53 +980,137 @@
   function toast(html, ms = 4000) {
     const t = $('toast'); t.innerHTML = html; t.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
-    const b = t.querySelector('button'); if (b) b.onclick = () => { t.classList.remove('show'); $('file').click(); };
   }
 
-  // 📋 画像: read the latest copied image (screenshot → コピーして削除)
-  $('paste').onclick = async () => {
-    try {
-      if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('unsupported');
-      const items = await navigator.clipboard.read();
-      for (const it of items) {
-        const type = it.types.find(t => t.startsWith('image/'));
-        if (type) { const blob = await it.getType(type); loadFile(new File([blob], 'clip', {type})); return; }
-      }
-      toast('コピーされた画像がありません <button>写真から選ぶ</button>');
-    } catch (e) {
-      toast('画像を読み込めませんでした <button>写真から選ぶ</button>');
-    }
-  };
-  $('pickPhoto').onclick = () => { closeMenu(); $('file').click(); };
+  // ---- modal sheet helpers ----
+  const modal = $('modal'), sheet = $('sheet');
+  const esc = t => String(t).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  function openSheet(html, bind) { sheet.innerHTML = html; modal.classList.add('show'); bind && bind(sheet); }
+  const closeSheet = () => modal.classList.remove('show');
+  modal.addEventListener('pointerdown', e => { if (e.target === modal) closeSheet(); });
 
+  // ---- image import ----
+  $('btnImg').onclick = () => { closeMenu(); $('file').click(); };
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
     const url = URL.createObjectURL(file);
     const im = new Image();
     im.onload = () => {
-      const R = toRatio();               // frame stays fixed (kept as ratio of screen size)
+      const R = toRatio();               // frame & placements are kept as ratios of the screen size
       img = im; IW = im.naturalWidth; IH = im.naturalHeight;
       fromRatio(R);
       $('radius').max = Math.round(IW / 6);
-      S.pins = [];
-      syncUI();
-      setMode('aim');
-      setTimeout(() => runDetect(true), 30);
+      S.pins = []; tipD = null;
+      const after = reset => {
+        closeSheet();
+        if (reset) { S.enemies = []; S.blocks = []; cur = null; setTimeout(() => runDetect(true), 30); }
+        selEnemy = selBlock = -1; persist(); setMode('ball');
+      };
+      if (S.enemies.length || S.blocks.length) {
+        openSheet(`<h3>前の配置はどうしますか？</h3>
+          <div class="small">敵 ${S.enemies.length}体・ブロック ${S.blocks.length}個が置かれています</div>
+          <button id="keepP" class="on" style="padding:13px">そのまま使う（玉の位置だけ決める）</button>
+          <button id="resetP" style="padding:13px">リセットして作り直す（ブロックは自動検出）</button>`,
+          sh => { sh.querySelector('#keepP').onclick = () => after(false); sh.querySelector('#resetP').onclick = () => after(true); });
+        setMode('ball');
+      } else after(true);
     };
     im.src = url;
   }
   $('file').onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; };
-  window.addEventListener('paste', e => {
-    const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
-    if (it) loadFile(it.getAsFile());
-  });
   window.addEventListener('dragover', e => e.preventDefault());
   window.addEventListener('drop', e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); });
 
+  // ---- stage library (quest -> stages). Saves frame, blocks, enemies (not the ball) ----
+  const LIB_KEY = 'monst-stages-v1';
+  let cur = null;   // {q: quest name, s: stage index} of the loaded stage
+  const loadLib = () => { try { return JSON.parse(localStorage.getItem(LIB_KEY) || '[]'); } catch (e) { return []; } };
+  const saveLib = L => { try { localStorage.setItem(LIB_KEY, JSON.stringify(L)); return true; } catch (e) { toast('保存できませんでした'); return false; } };
+  const snapshot = () => { const R = toRatio(); return {field: R.field, blocks: R.blocks, enemies: R.enemies, savedAt: Date.now()}; };
+  function applyStage(st) {
+    fromRatio({field: st.field, blocks: st.blocks || [], enemies: st.enemies || []});
+    selEnemy = selBlock = -1; S.pins = []; persist();
+  }
+  function stageSheet() {
+    const L = loadLib();
+    let html = `<h3>📁 ステージ保存・読み込み</h3>
+      <div class="small">枠・ブロック・敵の配置を保存します（玉の位置は保存しません）</div>`;
+    L.forEach((q, qi) => {
+      html += `<div class="q"><div class="qh"><b>${esc(q.name)}</b><button data-delq="${qi}" class="danger">削除</button></div>`;
+      q.stages.forEach((st, si) => {
+        const isCur = cur && cur.q === q.name && cur.s === si;
+        html += `<div class="st"><span>ステージ${si + 1}${isCur ? '（表示中）' : ''}　敵${(st.enemies || []).length}・ブロック${(st.blocks || []).length}</span>
+          <button data-load="${qi},${si}">読込</button><button data-over="${qi},${si}">上書き</button><button data-dels="${qi},${si}" class="danger">✕</button></div>`;
+      });
+      html += `<button data-add="${qi}">＋ 今の配置をステージ${q.stages.length + 1}として保存</button></div>`;
+    });
+    html += `<div class="q"><div class="small">新しいクエスト</div><input type="text" id="qname" placeholder="クエスト名（例：〇〇 超究極）">
+      <button id="qcreate">作成して今の配置をステージ1に保存</button></div>
+      <div class="row"><button id="bkOut">バックアップを書き出す</button><button id="bkIn">バックアップを読み込む</button></div>
+      <button id="closeS">閉じる</button>`;
+    openSheet(html, sh => {
+      const armed = {};   // tap twice to delete
+      const confirm2 = (btn, key, fn) => { if (armed[key]) fn(); else { armed[key] = 1; btn.textContent = 'もう一度押すと削除'; } };
+      sh.querySelectorAll('[data-load]').forEach(b => b.onclick = () => {
+        const [qi, si] = b.dataset.load.split(',').map(Number); applyStage(L[qi].stages[si]);
+        cur = {q: L[qi].name, s: si}; closeSheet(); setMode('ball'); toast(`${esc(L[qi].name)} ステージ${si + 1}を読み込みました`, 2500);
+      });
+      sh.querySelectorAll('[data-over]').forEach(b => b.onclick = () => {
+        const [qi, si] = b.dataset.over.split(',').map(Number); L[qi].stages[si] = snapshot();
+        if (saveLib(L)) { cur = {q: L[qi].name, s: si}; toast('上書き保存しました', 2000); stageSheet(); syncUI(); }
+      });
+      sh.querySelectorAll('[data-dels]').forEach(b => b.onclick = () => confirm2(b, 's' + b.dataset.dels, () => {
+        const [qi, si] = b.dataset.dels.split(',').map(Number); L[qi].stages.splice(si, 1);
+        if (cur && cur.q === L[qi].name) cur = null; saveLib(L); stageSheet(); syncUI();
+      }));
+      sh.querySelectorAll('[data-delq]').forEach(b => b.onclick = () => confirm2(b, 'q' + b.dataset.delq, () => {
+        const qi = +b.dataset.delq; if (cur && cur.q === L[qi].name) cur = null; L.splice(qi, 1); saveLib(L); stageSheet(); syncUI();
+      }));
+      sh.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+        const qi = +b.dataset.add; L[qi].stages.push(snapshot());
+        if (saveLib(L)) { cur = {q: L[qi].name, s: L[qi].stages.length - 1}; toast('保存しました', 2000); stageSheet(); syncUI(); }
+      });
+      sh.querySelector('#qcreate').onclick = () => {
+        const name = sh.querySelector('#qname').value.trim();
+        if (!name) { sh.querySelector('#qname').focus(); return; }
+        let q = L.find(x => x.name === name); if (!q) { q = {name, stages: []}; L.push(q); }
+        q.stages.push(snapshot());
+        if (saveLib(L)) { cur = {q: name, s: q.stages.length - 1}; toast('保存しました', 2000); stageSheet(); syncUI(); }
+      };
+      sh.querySelector('#bkOut').onclick = () => {
+        const txt = JSON.stringify({app: 'monst-hojosen', v: 1, quests: loadLib()});
+        openSheet(`<h3>バックアップを書き出す</h3><div class="small">この文字をメモ帳などに保存しておくと、あとで読み込めます</div>
+          <textarea id="bkTxt" readonly>${esc(txt)}</textarea><button id="bkCopy" class="on">コピー</button><button id="bkBack">戻る</button>`, s2 => {
+          s2.querySelector('#bkCopy').onclick = async () => {
+            try { await navigator.clipboard.writeText(txt); toast('コピーしました', 2000); }
+            catch (e) { const t = s2.querySelector('#bkTxt'); t.select(); toast('文字を長押ししてコピーしてください', 3000); }
+          };
+          s2.querySelector('#bkBack').onclick = stageSheet;
+        });
+      };
+      sh.querySelector('#bkIn').onclick = () => {
+        openSheet(`<h3>バックアップを読み込む</h3><div class="small">書き出した文字を貼り付けてください。同じ名前のクエストは置き換わります</div>
+          <textarea id="bkTxt" placeholder="ここに貼り付け"></textarea><button id="bkDo" class="on">読み込む</button><button id="bkBack">戻る</button>`, s2 => {
+          s2.querySelector('#bkDo').onclick = () => {
+            try {
+              const d = JSON.parse(s2.querySelector('#bkTxt').value);
+              const qs = Array.isArray(d) ? d : d.quests; if (!Array.isArray(qs)) throw 0;
+              const L2 = loadLib();
+              qs.forEach(q => { if (!q || !q.name || !Array.isArray(q.stages)) return; const i = L2.findIndex(x => x.name === q.name); if (i >= 0) L2[i] = q; else L2.push(q); });
+              if (saveLib(L2)) { toast(`${qs.length}件のクエストを読み込みました`, 2500); stageSheet(); }
+            } catch (e) { toast('読み込めませんでした（文字が途中で切れていないか確認してください）', 3500); }
+          };
+          s2.querySelector('#bkBack').onclick = stageSheet;
+        });
+      };
+      sh.querySelector('#closeS').onclick = closeSheet;
+    });
+  }
+  $('stages').onclick = () => { closeMenu(); stageSheet(); };
+
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
-  syncUI();
-  layout();
+  setMode('ball');
 })();
 </script>
 </body>
