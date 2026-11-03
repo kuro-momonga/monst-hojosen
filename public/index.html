@@ -148,7 +148,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.8';
+  const VERSION = '2.9';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -177,6 +177,8 @@
   const WALL_PAD = 12 / 1170;
   const GUIDE_R = 100 / 1170;
   // Block = one cell of the 8-column grid (1170/8 = 146.25px), measured from gameplay video.
+  // Minion hitbox: measured radius ≈73px on 2 different enemies (of 1170); centre ≈93–114px above its HP bar.
+  const MINION_R = 73;
   const BLOCK = 1 / 8;            // cell width / stack pitch (146.25px of 1170)
   const BLOCK_H = 169 / 1170;     // hitbox height: sprite top-8 .. sprite bottom+5 (measured)
   const blockImg = new Image(); blockImg.src = 'block.png'; blockImg.onload = () => draw();
@@ -311,7 +313,7 @@
       }
       const bw = maxx - minx + 1, bh = maxy - miny + 1;
       if (bw >= 45 * u && bw <= 140 * u && bh >= 4 * u && bh <= 22 * u && bw / bh > 3.5 && n > .6 * bw * bh)
-        out.push({x: x0 + (minx + maxx) / 2, y: y0 + miny - 93 * u, R: 73 * u, barY: y0 + miny});
+        out.push({x: x0 + (minx + maxx) / 2, y: y0 + miny - 103 * u, R: MINION_R * u, barY: y0 + miny});
     }
     const E = out.filter(e => e.y > f.t - 60 * u && e.y < f.b);
     // group same-looking enemies: compare the sprite just above each HP bar (normalized cross-correlation)
@@ -897,7 +899,7 @@
     S.angle = Math.atan2(dy, dx) * 180 / Math.PI;
   }
 
-  let selEnemy = -1, selBlock = -1, lastEnemyR = 95 / 1170 * IW, editShape = 'circle';
+  let selEnemy = -1, selBlock = -1, lastEnemyR = MINION_R / 1170 * IW, editShape = 'circle';
   const $ = id => document.getElementById(id);
 
   cv.addEventListener('pointerdown', e => {
