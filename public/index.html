@@ -145,7 +145,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.0';
+  const VERSION = '2.1';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -522,14 +522,17 @@
     ctx.restore();
 
     // pinned
-    S.pins.forEach(p => drawPinned(trace(p.x, p.y, p.angle, wallPad(), p.bounces)));
+    const showLines = mode === 'aim' || mode === 'arrow';   // ① 玉 / ② 配置 では線を出さない
+    if (showLines) S.pins.forEach(p => drawPinned(trace(p.x, p.y, p.angle, wallPad(), p.bounces)));
 
     // current
     const pts = trace(S.ball.x, S.ball.y, S.angle, wallPad(), S.bounces);
     drawBlocks();
-    drawEnemies(pts.hits);
-    if (S.wobble > 0) [-S.wobble, S.wobble].forEach(w => drawWobble(trace(S.ball.x, S.ball.y, S.angle + w, wallPad(), S.bounces)));
-    drawPath(pts);
+    drawEnemies(showLines ? pts.hits : new Set());
+    if (showLines) {
+      if (S.wobble > 0) [-S.wobble, S.wobble].forEach(w => drawWobble(trace(S.ball.x, S.ball.y, S.angle + w, wallPad(), S.bounces)));
+      drawPath(pts);
+    }
 
     if (mode === 'place' && selBlock >= 0 && S.blocks[selBlock]) drawPlusHandles(S.blocks[selBlock]);
 
@@ -627,7 +630,7 @@
     ctx.restore();
     // background loupe at the tip (raw screenshot, no overlays)
     if (!img) return;
-    const size = 160, zoom = 2.5, src = size / zoom / scale;   // image px shown
+    const size = 170, zoom = 1.6, src = size / zoom / scale;   // image px shown
     const w = cv.clientWidth, lx = stx < w / 2 ? w - size - 10 : 10, ly = 10;
     ctx.save();
     ctx.beginPath(); ctx.arc(lx + size / 2, ly + size / 2, size / 2, 0, Math.PI * 2); ctx.clip();
@@ -645,7 +648,7 @@
   }
 
   function drawLoupe(sx, sy) {
-    const size = 120, zoom = 3;
+    const size = 150, zoom = 1.7;
     const src = size / zoom;
     loupe.width = size * dpr; loupe.height = size * dpr;
     const lc = loupe.getContext('2d');
