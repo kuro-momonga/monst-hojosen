@@ -145,7 +145,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.5';
+  const VERSION = '2.6';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -415,26 +415,47 @@
   const toS = (x, y) => [ox + x * scale, oy + y * scale];
   const toI = (sx, sy) => [(sx - ox) / scale, (sy - oy) / scale];
 
-  // ---- enemy hitbox: "カクカクの丸" = octagon (flat faces up/down/left/right + diagonals) ----
-  // Guide-item video: reflections off an enemy only came back with a few fixed normals
-  // (≈90°, ≈45°, ≈150°, ≈175°), i.e. flat faces, not a circle. e.R = apothem (centre to flat face).
-  const OCT = [...Array(8)].map((_, i) => [Math.cos(i * Math.PI / 4), Math.sin(i * Math.PI / 4)]);   // face normals
-  function rayOct(x, y, dx, dy, e, pad) {   // Cyrus–Beck ray vs convex octagon of apothem e.R + pad
-    const A = e.R + pad; let tin = -Infinity, tout = Infinity, n = null;
-    for (const [nx, ny] of OCT) {
-      const num = A - ((x - e.x) * nx + (y - e.y) * ny), den = dx * nx + dy * ny;
-      if (Math.abs(den) < 1e-12) { if (num < 0) return null; continue; }
-      const tt = num / den;
-      if (den < 0) { if (tt > tin) { tin = tt; n = [nx, ny]; } } else if (tt < tout) tout = tt;
-      if (tin > tout) return null;
+  // ---- enemy hitbox: "カクカクの丸" = a circle made of stacked axis-aligned steps ----
+  // Guide video: off enemies the ball reflects exactly like off walls/blocks (only x or y flips);
+  // odd bounces appear only at a few angles = the step corners. e.R = radius of the stepped circle.
+  const STEPS = 4;   // steps per half (top/bottom)
+  function stepRects(e) {
+    const out = [];
+    for (let k = 0; k < STEPS; k++) {
+      const y0 = e.R * k / STEPS, y1 = e.R * (k + 1) / STEPS, yc = (y0 + y1) / 2;
+      const w = e.R * Math.sqrt(Math.max(0, 1 - (yc / e.R) ** 2));
+      out.push({l: e.x - w, r: e.x + w, t: e.y + y0, b: e.y + y1});   // lower half
+      out.push({l: e.x - w, r: e.x + w, t: e.y - y1, b: e.y - y0});   // upper half
     }
-    if (tin < 0 || !n) return null;   // starting inside: ignore
-    return {t: tin, n};
+    return out;
   }
-  function octPath(cx, cy, A) {   // A in screen px (apothem)
-    const Rv = A / Math.cos(Math.PI / 8);
+  // ray vs axis-aligned box expanded by pad (same rule as blocks): returns {t, fx, fy}
+  function rayBox(x, y, dx, dy, B, pad) {
+    const l = B.l - pad, r = B.r + pad, tp = B.t - pad, bt = B.b + pad;
+    if (x > l && x < r && y > tp && y < bt) return null;
+    let txn, txf, tyn, tyf;
+    if (Math.abs(dx) < 1e-9) { if (x <= l || x >= r) return null; txn = -Infinity; txf = Infinity; }
+    else { const a1 = (l - x) / dx, a2 = (r - x) / dx; txn = Math.min(a1, a2); txf = Math.max(a1, a2); }
+    if (Math.abs(dy) < 1e-9) { if (y <= tp || y >= bt) return null; tyn = -Infinity; tyf = Infinity; }
+    else { const b1 = (tp - y) / dy, b2 = (bt - y) / dy; tyn = Math.min(b1, b2); tyf = Math.max(b1, b2); }
+    const ten = Math.max(txn, tyn), tex = Math.min(txf, tyf);
+    if (!(ten < tex && ten > 1e-6)) return null;
+    return {t: ten, fx: Math.abs(txn - ten) < 1e-6, fy: Math.abs(tyn - ten) < 1e-6};
+  }
+  function rayEnemy(x, y, dx, dy, e, pad) {
+    let best = null;
+    for (const B of stepRects(e)) { const h = rayBox(x, y, dx, dy, B, pad); if (h && (!best || h.t < best.t)) best = h; }
+    return best;
+  }
+  function stepPath(e) {   // outline of the stepped circle in screen space
+    const R = stepRects(e).filter(B => B.t >= e.y).sort((a, b) => a.t - b.t);   // lower half, top→bottom
+    const pts = [];
+    R.forEach(B => { pts.push([B.r, B.t], [B.r, B.b]); });
+    for (let i = R.length - 1; i >= 0; i--) pts.push([R[i].l, R[i].b], [R[i].l, R[i].t]);
+    const up = pts.map(([x, y]) => [x, 2 * e.y - y]);
     ctx.beginPath();
-    for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; ctx[i ? 'lineTo' : 'moveTo'](cx + Rv * Math.cos(a), cy + Rv * Math.sin(a)); }
+    pts.forEach(([x, y], i) => { const [sx, sy] = toS(x, y); ctx[i ? 'lineTo' : 'moveTo'](sx, sy); });
+    up.reverse().forEach(([x, y]) => { const [sx, sy] = toS(x, y); ctx.lineTo(sx, sy); });
     ctx.closePath();
   }
 
@@ -456,8 +477,8 @@
       let hitN = null;
       if (!S.pierce) {
         E.forEach((e, k) => {
-          const h = rayOct(x, y, dx, dy, e, rb);
-          if (h && h.t > 1e-6 && h.t < t) { t = h.t; hitE = k; hitN = h.n; }
+          const h = rayEnemy(x, y, dx, dy, e, rb);
+          if (h && h.t < t) { t = h.t; hitE = k; hitN = h; }
         });
       }
       let hitB = -1, flipX = false, flipY = false;
@@ -481,7 +502,7 @@
       if (S.pierce) E.forEach((e, k) => {               // pass-through: mark every enemy the segment touches
         const sx = x - x0, sy = y - y0, L2 = sx * sx + sy * sy || 1;
         const u = Math.max(0, Math.min(1, ((e.x - x0) * sx + (e.y - y0) * sy) / L2));
-        const L = Math.hypot(sx, sy) || 1, h = rayOct(x0, y0, sx / L, sy / L, e, rb);
+        const L = Math.hypot(sx, sy) || 1, h = rayEnemy(x0, y0, sx / L, sy / L, e, rb);
         if (h && h.t <= L) pts.hits.add(k);
       });
       pts.push([x, y]);
@@ -490,8 +511,8 @@
         if (flipY) dy = -dy;
         pts.kinds.push('b');
       } else if (hitE >= 0) {
-        const [nx, ny] = hitN, dot = dx * nx + dy * ny;
-        dx -= 2 * dot * nx; dy -= 2 * dot * ny; pts.hits.add(hitE); pts.kinds.push('e');
+        if (hitN.fx) dx = -dx;
+        if (hitN.fy) dy = -dy; pts.hits.add(hitE); pts.kinds.push('e');
       } else {
         const eps = 1e-6;
         if (tx <= t + eps) dx = -dx;
@@ -808,7 +829,7 @@
     ctx.save();
     S.enemies.forEach((e, k) => {
       const [x, y] = toS(e.x, e.y), R = e.R * scale, hit = hits.has(k), sel = mode === 'place' && (k === selEnemy || (selEnemy >= 0 && S.enemies[selEnemy] && e.g != null && e.g === S.enemies[selEnemy].g));
-      octPath(x, y, R);
+      stepPath(e);
       ctx.fillStyle = hit ? 'rgba(255,70,120,.32)' : 'rgba(255,70,120,.10)'; ctx.fill();
       ctx.setLineDash(sel ? [6, 4] : []);
       ctx.lineWidth = hit || sel ? 3 : 2; ctx.strokeStyle = hit ? '#ff4d88' : 'rgba(255,120,160,.85)'; ctx.stroke();
