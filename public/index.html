@@ -151,7 +151,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.16';
+  const VERSION = '2.17';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -809,16 +809,18 @@
   // ---- arrow mode: Monst-style arrow on the first segment, tip slides along the line ----
   let tipD = null;   // distance from ball to arrow tip (image px)
   function firstLen(pts) { return pts.length > 1 ? Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) : 0; }
-  function maxTip() {   // straight line from the ball until it leaves the screenshot
-    const a = S.angle * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a);
+  function maxTip(back) {   // straight line from the ball until it leaves the screenshot (back = behind the ball)
+    const a = S.angle * Math.PI / 180, sg = back ? -1 : 1, dx = sg * Math.cos(a), dy = sg * Math.sin(a);
     const tx = dx > 1e-9 ? (IW - S.ball.x) / dx : dx < -1e-9 ? -S.ball.x / dx : Infinity;
     const ty = dy > 1e-9 ? (IH - S.ball.y) / dy : dy < -1e-9 ? -S.ball.y / dy : Infinity;
     return Math.min(tx, ty);
   }
+  // tip can go forward (arrow head) or backward (tail side) along the shot line
+  const clampTip = d => Math.max(-maxTip(true), Math.min(d, maxTip()));
   function tipPoint(pts) {
     const L = firstLen(pts), a = S.angle * Math.PI / 180;
     if (tipD == null) tipD = Math.min(L * .6, 520 / 1170 * IW);
-    const d = Math.max(S.r * 1.2, Math.min(tipD, maxTip()));
+    const d = clampTip(tipD);
     return [S.ball.x + Math.cos(a) * d, S.ball.y + Math.sin(a) * d];
   }
   function drawArrowMode(pts) {
@@ -827,8 +829,9 @@
     ctx.save();
     // the first line extended straight past the bounce point
     const ml = maxTip(), [ex, ey] = toS(S.ball.x + Math.cos(a) * ml, S.ball.y + Math.sin(a) * ml);
+    const mb = maxTip(true), [qx, qy] = toS(S.ball.x - Math.cos(a) * mb, S.ball.y - Math.sin(a) * mb);
     ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 6]);
-    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(stx, sty);
     ctx.lineTo(bx + nx * hw, by + ny * hw); ctx.lineTo(bx - nx * hw, by - ny * hw); ctx.closePath();
     const g = ctx.createLinearGradient(bx, by, stx, sty);
@@ -928,7 +931,7 @@
   function moveTip(sx, sy) {
     const [ix, iy] = toI(sx, sy), a = S.angle * Math.PI / 180;
     tipD = (ix - S.ball.x) * Math.cos(a) + (iy - S.ball.y) * Math.sin(a);   // project onto the shot line
-    tipD = Math.max(S.r * 1.2, Math.min(tipD, maxTip()));
+    tipD = clampTip(tipD);
   }
 
   // ball center may go a little past the frame line
@@ -1040,7 +1043,7 @@
     if (k === 'tip') {
       const a = S.angle * Math.PI / 180;
       const along = ((sx - dragInfo.sx0) * Math.cos(a) + (sy - dragInfo.sy0) * Math.sin(a)) / scale;
-      tipD = Math.max(S.r * 1.2, Math.min(dragInfo.d0 + along, maxTip()));
+      tipD = clampTip(dragInfo.d0 + along);
     }
     else if (k === 'ballRel') {
       S.ball.x += (sx - dragInfo.lx) / scale; S.ball.y += (sy - dragInfo.ly) / scale; clampBall();
@@ -1112,7 +1115,7 @@
     else if (mode === 'aim') { S.angle += dx * 0.015; }          // ~0.5° per cm
     else if (mode === 'arrow') {
       const a = S.angle * Math.PI / 180;
-      tipD = Math.max(S.r * 1.2, Math.min((tipD || 0) + (dx * Math.cos(a) + dy * Math.sin(a)) / scale * .5, maxTip()));
+      tipD = clampTip((tipD || 0) + (dx * Math.cos(a) + dy * Math.sin(a)) / scale * .5);
     }
     draw();
   });
