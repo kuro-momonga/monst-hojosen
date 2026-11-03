@@ -148,7 +148,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.11';
+  const VERSION = '2.10';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -475,12 +475,6 @@
     const a = angDeg * Math.PI / 180;
     let dx = Math.cos(a), dy = Math.sin(a);
     const E = S.enemies, rb = S.r;
-    // In the game a ball that starts touching/overlapping an enemy or block just leaves it:
-    // ignore those objects until the first bounce (otherwise the line gets "stuck" at the start).
-    const tol = 10 * IW / 1170, near = (B, pad) => bx > B.l - pad - tol && bx < B.r + pad + tol && by > B.t - pad - tol && by < B.b + pad + tol;
-    const skipE = new Set(), skipB = new Set();
-    E.forEach((e, k) => { if (stepRects(e).some(B => near(B, rb))) skipE.add(k); });
-    S.blocks.forEach((B, k) => { if (near({l: Math.min(B.l, B.r), r: Math.max(B.l, B.r), t: Math.min(B.t, B.b), b: Math.max(B.t, B.b)}, rb)) skipB.add(k); });
     for (let i = 0; i <= n; i++) {
       const tx = dx > 1e-9 ? (xmax - x) / dx : dx < -1e-9 ? (xmin - x) / dx : Infinity;
       const ty = dy > 1e-9 ? (ymax - y) / dy : dy < -1e-9 ? (ymin - y) / dy : Infinity;
@@ -488,14 +482,12 @@
       let hitN = null;
       if (!S.pierce) {
         E.forEach((e, k) => {
-          if (i === 0 && skipE.has(k)) return;
           const h = rayEnemy(x, y, dx, dy, e, rb);
           if (h && h.t < t) { t = h.t; hitE = k; hitN = h; }
         });
       }
       let hitB = -1, flipX = false, flipY = false;
       S.blocks.forEach((B, k) => {
-        if (i === 0 && skipB.has(k)) return;
         const rb2 = S.r, l = Math.min(B.l, B.r) - rb2, r = Math.max(B.l, B.r) + rb2, tp = Math.min(B.t, B.b) - rb2, bt = Math.max(B.t, B.b) + rb2;
         if (x > l && x < r && y > tp && y < bt) return;       // starting inside: ignore
         let txn, txf, tyn, tyf;
