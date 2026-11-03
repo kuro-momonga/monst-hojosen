@@ -104,7 +104,7 @@
 
 <script>
 (() => {
-  const VERSION = '1.9';
+  const VERSION = '1.10';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -131,7 +131,16 @@
   const DEFAULT_FIELD = {l: 40 / 1170, t: 468 / 2532, r: 1129 / 1170, b: 1704 / 2532};
   const OLD_DEFAULT = {l: .035, t: .187, r: .965, b: .676};
   const WALL_PAD = 12 / 1170;
-  const GUIDE_R = 100 / 1170;   // radius of the orange turn ring (measured ~97-112)
+  const GUIDE_R = 100 / 1170;
+  // Block = one cell of the 8-column grid (1170/8 = 146.25px), measured from gameplay video.
+  const BLOCK = 1 / 8;
+  const blockImg = new Image(); blockImg.src = 'block.png'; blockImg.onload = () => draw();
+  // x snaps to the 8-column grid (blocks line up with screen edges); y is free
+  function placeBlock(l, t) {
+    const W = BLOCK * IW;
+    l = Math.round(l / W) * W;
+    return {l, t, r: l + W, b: t + W};
+  }   // radius of the orange turn ring (measured ~97-112)
   const wallPad = () => WALL_PAD * IW;
   const S = {
     field: {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH},
@@ -445,15 +454,17 @@
   function drawBlocks() {
     ctx.save();
     S.blocks.forEach((B, k) => {
-      const [x1, y1] = toS(Math.min(B.l, B.r), Math.min(B.t, B.b)), [x2, y2] = toS(Math.max(B.l, B.r), Math.max(B.t, B.b));
+      const [x1, y1] = toS(B.l, B.t), [x2, y2] = toS(B.r, B.b), w = x2 - x1, h = y2 - y1;
       const sel = mode === 'enemy' && k === selBlock;
-      ctx.fillStyle = 'rgba(120,200,255,.16)'; ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
-      ctx.setLineDash(sel ? [6, 4] : []); ctx.lineWidth = sel ? 3 : 2; ctx.strokeStyle = 'rgba(120,200,255,.9)';
-      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1); ctx.setLineDash([]);
-      if (mode === 'enemy') {
-        ctx.fillStyle = '#78c8ff';
-        [[x1, y1], [x2, y1], [x1, y2], [x2, y2]].forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill(); });
-      }
+      if (blockImg.complete && blockImg.naturalWidth) {
+        // sprite: 136x156 drawn inside the 146 cell (5px margin, base shadow hangs below)
+        const sc = w / 146.25;
+        ctx.globalAlpha = .9;
+        ctx.drawImage(blockImg, x1 + 5 * sc, y1 + 5 * sc, 136 * sc, 156 * sc);
+        ctx.globalAlpha = 1;
+      } else { ctx.fillStyle = 'rgba(120,200,255,.2)'; ctx.fillRect(x1, y1, w, h); }
+      ctx.setLineDash(sel ? [6, 4] : [3, 4]); ctx.lineWidth = sel ? 2.5 : 1.2;
+      ctx.strokeStyle = sel ? '#78c8ff' : 'rgba(120,200,255,.8)'; ctx.strokeRect(x1, y1, w, h); ctx.setLineDash([]);
     });
     ctx.restore();
   }
@@ -500,29 +511,18 @@
     const [sx, sy] = pos(e);
     if (mode === 'enemy') {
       const [ix, iy] = toI(sx, sy);
-      // blocks: corner handles, then inside
+      // blocks: fixed-size stamps (same size in every stage). Tap inside = move, tap empty (block tool) = place
       for (let i = S.blocks.length - 1; i >= 0; i--) {
         const B = S.blocks[i];
-        const xs = [Math.min(B.l, B.r), Math.max(B.l, B.r)], ys = [Math.min(B.t, B.b), Math.max(B.t, B.b)];
-        for (const cxI of [0, 1]) for (const cyI of [0, 1]) {
-          const [hx, hy] = toS(xs[cxI], ys[cyI]);
-          if (Math.hypot(sx - hx, sy - hy) < 22) {
-            Object.assign(B, {l: xs[1 - cxI], r: xs[cxI], t: ys[1 - cyI], b: ys[cyI]});   // drag (r,b) corner
-            selBlock = i; selEnemy = -1;
-            dragInfo = {kind: 'block', how: 'corner', k: i, sx, sy}; hint.style.display = 'none'; draw(); return;
-          }
+        if (ix > B.l && ix < B.r && iy > B.t && iy < B.b && (editShape === 'rect' || true)) {
+          selBlock = i; selEnemy = -1;
+          dragInfo = {kind: 'block', k: i, off: [B.l - ix, B.t - iy], sx, sy}; hint.style.display = 'none'; draw(); return;
         }
       }
       if (editShape === 'rect') {
-        for (let i = S.blocks.length - 1; i >= 0; i--) {
-          const B = S.blocks[i];
-          if (ix > Math.min(B.l, B.r) && ix < Math.max(B.l, B.r) && iy > Math.min(B.t, B.b) && iy < Math.max(B.t, B.b)) {
-            selBlock = i; selEnemy = -1;
-            dragInfo = {kind: 'block', how: 'move', k: i, start: [ix, iy], orig: {...B}, sx, sy}; hint.style.display = 'none'; draw(); return;
-          }
-        }
-        S.blocks.push({l: ix, t: iy, r: ix, b: iy}); selBlock = S.blocks.length - 1; selEnemy = -1;
-        dragInfo = {kind: 'block', how: 'corner', k: selBlock, sx, sy, isNew: true}; hint.style.display = 'none'; draw(); return;
+        const W = BLOCK * IW;
+        S.blocks.push(placeBlock(ix - W / 2, iy - W / 2)); selBlock = S.blocks.length - 1; selEnemy = -1;
+        dragInfo = {kind: 'block', k: selBlock, off: [-W / 2, -W / 2], sx, sy}; hint.style.display = 'none'; draw(); return;
       }
       selBlock = -1;
       let k = -1, how = '';
@@ -583,10 +583,7 @@
     dragInfo.sx = sx; dragInfo.sy = sy;
     const [ix, iy] = toI(sx, sy);
     if (dragInfo.kind === 'block') {
-      const B = S.blocks[dragInfo.k];
-      if (dragInfo.how === 'corner') { B.r = ix; B.b = iy; }
-      else { const o = dragInfo.orig, ddx = ix - dragInfo.start[0], ddy = iy - dragInfo.start[1];
-             Object.assign(B, {l: o.l + ddx, r: o.r + ddx, t: o.t + ddy, b: o.b + ddy}); }
+      S.blocks[dragInfo.k] = placeBlock(ix + dragInfo.off[0], iy + dragInfo.off[1]);
     } else if (dragInfo.kind === 'enemy') {
       const en = S.enemies[dragInfo.k];
       if (dragInfo.how === 'move') { en.x = ix + dragInfo.off[0]; en.y = iy + dragInfo.off[1]; }
@@ -619,11 +616,7 @@
   const end = () => {
     if (!dragInfo) return;
     clearTimeout(dragInfo.timer);
-    if (dragInfo.kind === 'block') {
-      const B = S.blocks[dragInfo.k];
-      if (Math.abs(B.r - B.l) < 15 || Math.abs(B.b - B.t) < 15) { S.blocks.splice(dragInfo.k, 1); selBlock = -1; }
-      else S.blocks[dragInfo.k] = {l: Math.min(B.l, B.r), r: Math.max(B.l, B.r), t: Math.min(B.t, B.b), b: Math.max(B.t, B.b)};
-    }
+
     dragInfo = null; clampBall(); persist(); draw();
   };
   cv.addEventListener('pointerup', end);
@@ -646,7 +639,7 @@
     if (m !== 'enemy') { selEnemy = -1; selBlock = -1; }
     hint.style.display = '';
     hint.textContent = m === 'aim' ? (S.pointAim ? '玉をドラッグで移動／それ以外をタッチで方向' : '引っ張って狙う／玉を長押しで移動')
-                     : m === 'enemy' ? (editShape === 'rect' ? 'ドラッグでブロックを描く／中で移動・角で大きさ' : 'タップで敵を置く・引っ張って大きさ／丸の中で移動・ふちで大きさ')
+                     : m === 'enemy' ? (editShape === 'rect' ? 'タップでブロックを置く／ドラッグで移動（横はマス目に吸着）' : 'タップで敵を置く・引っ張って大きさ／丸の中で移動・ふちで大きさ')
                      : '赤枠の辺・角をドラッグで調整';
     layout();
   }
