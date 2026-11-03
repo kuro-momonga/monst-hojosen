@@ -117,6 +117,10 @@
     <button data-da="0.1">+.1</button>
     <button data-da="1">+1°</button>
   </div>
+  <div class="stepRow" id="row-type">
+    <div class="seg"><button id="tRef">反射</button><button id="tPie">貫通</button></div>
+    <button id="tAB">アンチブロック</button>
+  </div>
   <div class="stepRow" id="row-stab"><span id="stab" class="small" style="display:none"></span></div>
   <div class="stepRow" id="row-aim2">
     <span class="small">反射</span>
@@ -137,7 +141,6 @@
     <button id="mField">枠を調整する</button>
     <button id="width">玉の通り道を表示</button>
     <button id="wobble">ブレ幅 ±0.5°</button>
-    <button id="pierce">貫通タイプ</button>
     <button id="pull">タッチした方向に飛ばす</button>
     <label class="sl">玉の当たり半径 <input id="radius" type="range" min="20" max="120" value="55"><b id="rv">55</b></label>
     <div class="small" style="text-align:right" id="ver"></div>
@@ -148,7 +151,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.13';
+  const VERSION = '2.16';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -264,12 +267,30 @@
     };
     const looksLikeBlock = q => {
       const face = stats(q.x, q.y, 112 * u, 100 * u), base = stats(q.x, q.y + 120 * u, 112 * u, 18 * u);
-      return face.S < 110 && face.V < 145 && base.V < 80;
+      // stacked blocks: the "base" is the next block's face, not a dark shadow → trust a strong match
+      return face.S < 90 && face.V > 95 && face.V < 145 && (base.V < 60 || q.s >= .85);
     };
     const P = BLOCK * IW, near = (a, b) => Math.abs(a - b) < 10 * IW / 1170;
     const aligned = (a, b) => (near(a.x, b.x) && Math.abs(Math.round((a.y - b.y) / P) * P - (a.y - b.y)) < 12) ||
                               (near(a.y, b.y) && Math.abs(Math.round((a.x - b.x) / P) * P - (a.x - b.x)) < 12);
     let found = peaks.filter(looksLikeBlock);
+    // align columns / rows: blocks in a stack share x (rows share y); partly hidden ones match a few px off
+    const snapAxis = ax => found.forEach(q => {
+      const mates = found.filter(o => Math.abs(o[ax] - q[ax]) < 24 * u);
+      const best = mates.reduce((a, b) => (b.s > a.s ? b : a), q);
+      q[ax] = best[ax];
+    });
+    snapAxis('x'); snapAxis('y');
+    // blocks in a row are spaced exactly one cell apart: fit the row's grid offset and snap
+    // (fixes edge blocks partly hidden by the side walls, which match a few px off)
+    const P0 = BLOCK * IW, rows = [];
+    found.forEach(q => { const r = rows.find(R => Math.abs(R[0].y - q.y) < 12 * u); r ? r.push(q) : rows.push([q]); });
+    rows.forEach(R => {
+      if (R.length < 2) return;
+      const inner = R.filter(q => q.x > f.l + 40 * u && q.x + 130 * u < f.r - 20 * u);
+      const ref = (inner.length ? inner : R).reduce((a, b) => (b.s > a.s ? b : a));
+      R.forEach(q => { q.x = ref.x + Math.round((q.x - ref.x) / P0) * P0; });
+    });
     // fill gaps inside straight runs (blocks partly hidden by enemies)
     for (const a of found.slice()) for (const b of found.slice()) {
       for (const [ax, dir] of [['x', 'y'], ['y', 'x']]) {
@@ -282,6 +303,27 @@
           if (score(q.x, q.y) >= .35) found.push({...q, s: 0});
         }
       }
+    }
+    // extend lines of blocks outward (blocks half hidden by the side walls, or stacked ones whose base isn't dark)
+    const has = (x, y) => found.some(o => Math.abs(o.x - x) < 14 * u && Math.abs(o.y - y) < 14 * u);
+    const visibleFace = (x, y, faceOnly) => {       // colour test on the part of the face that is inside the field
+      const xa = Math.max(x, f.l + 4 * u), xb = Math.min(x + 112 * u, f.r - 4 * u);
+      if (xb - xa < 30 * u) return false;
+      const fc = stats(xa, y, xb - xa, 100 * u);
+      const bs = stats(xa, y + 120 * u, xb - xa, 18 * u);
+      return fc.S < 90 && fc.V > 95 && fc.V < 145 && (faceOnly || bs.V < 60 || (bs.S < 90 && bs.V > 95 && bs.V < 145));
+    };
+    for (let pass = 0; pass < 8; pass++) {
+      let added = 0;
+      for (const q of found.slice()) for (const [ddx, ddy] of [[P, 0], [-P, 0], [0, P], [0, -P]]) {
+        if (!has(q.x - ddx, q.y - ddy) && q.s < .9) continue;      // must be part of a line (or a very sure block)
+        const nx = q.x + ddx, ny = q.y + ddy;
+        if (has(nx, ny) || nx + 112 * u < f.l + 30 * u || nx > f.r - 30 * u || ny < f.t - 124 * u || ny > f.b - 34 * u) continue;
+        const edge = nx < f.l + 20 * u || nx + 112 * u > f.r - 20 * u;
+        const ok = edge ? (ddy === 0 && visibleFace(nx, ny, true)) : (score(nx, ny) >= .62 && visibleFace(nx, ny));
+        if (ok) { found.push({x: nx, y: ny, s: .5}); added++; }
+      }
+      if (!added) break;
     }
     // sprite-face top-left -> cell (face starts 5px into the sprite, sprite 5px into the cell, hitbox top 8px above sprite)
     return found.filter(q => q.y > f.t - 124 && q.y < f.b - 34)
@@ -363,6 +405,7 @@
     blocks: [],
     wobble: 0.5,
     pierce: false,
+    antiBlock: false,
     angle: -60,                      // degrees, 0 = right, negative = up
     bounces: 5,
     pointAim: false,   // false = Monst-style pull (default), true = touch the target direction
@@ -376,7 +419,7 @@
   const toRatio = () => ({
     field: {l: S.field.l / IW, t: S.field.t / IH, r: S.field.r / IW, b: S.field.b / IH},
     ball: {x: S.ball.x / IW, y: S.ball.y / IH},
-    r: S.r / IW, angle: S.angle, bounces: S.bounces, pointAim: S.pointAim, showWidth: S.showWidth, pierce: S.pierce, dim: S.dim,
+    r: S.r / IW, angle: S.angle, bounces: S.bounces, pointAim: S.pointAim, showWidth: S.showWidth, pierce: S.pierce, antiBlock: S.antiBlock, dim: S.dim,
     enemies: S.enemies.map(e => ({x: e.x / IW, y: e.y / IH, R: e.R / IW, g: e.g, ax: e.ax == null ? null : e.ax / IW, ay: e.ay == null ? null : e.ay / IH})),
     blocks: S.blocks.map(b => ({l: b.l / IW, r: b.r / IW, t: b.t / IH, b: b.b / IH})), wobble: S.wobble
   });
@@ -384,7 +427,7 @@
     if (R.field) S.field = {l: R.field.l * IW, t: R.field.t * IH, r: R.field.r * IW, b: R.field.b * IH};
     if (R.ball) S.ball = {x: R.ball.x * IW, y: R.ball.y * IH};
     if (R.r) S.r = R.r * IW;
-    ['angle', 'bounces', 'pointAim', 'showWidth', 'pierce', 'dim'].forEach(k => { if (k in R) S[k] = R[k]; });
+    ['angle', 'bounces', 'pointAim', 'showWidth', 'pierce', 'antiBlock', 'dim'].forEach(k => { if (k in R) S[k] = R[k]; });
     if ('wobble' in R) S.wobble = R.wobble;
     if (Array.isArray(R.blocks)) S.blocks = R.blocks.map(b => ({l: b.l * IW, r: b.r * IW, t: b.t * IH, b: b.b * IH}));
     if (Array.isArray(R.enemies)) S.enemies = R.enemies.map(e => ({x: e.x * IW, y: e.y * IH, R: e.R * IW, g: e.g, ax: e.ax == null ? null : e.ax * IW, ay: e.ay == null ? null : e.ay * IH}));
@@ -493,7 +536,7 @@
         });
       }
       let hitB = -1, flipX = false, flipY = false;
-      S.blocks.forEach((B, k) => {
+      if (!S.antiBlock) S.blocks.forEach((B, k) => {
         if (i === 0 && skipB.has(k)) return;
         const rb2 = S.r, l = Math.min(B.l, B.r) - rb2, r = Math.max(B.l, B.r) + rb2, tp = Math.min(B.t, B.b) - rb2, bt = Math.max(B.t, B.b) + rb2;
         if (x > l && x < r && y > tp && y < bt) return;       // starting inside: ignore
@@ -698,7 +741,7 @@
   }
   let lastStab = null;
   function updateStability() {
-    const key = [S.angle, S.ball.x, S.ball.y, S.bounces, S.pierce, JSON.stringify(S.enemies), JSON.stringify(S.blocks), S.r].join(';');
+    const key = [S.angle, S.ball.x, S.ball.y, S.bounces, S.pierce, S.antiBlock, JSON.stringify(S.enemies), JSON.stringify(S.blocks), S.r].join(';');
     if (key !== stabCache) { stabCache = key; lastStab = stabRange(); }
     const {lo, hi} = lastStab, m = Math.min(lo, hi), el = $('stab');
     el.style.display = '';
@@ -1103,6 +1146,7 @@
     $('row-aim').classList.toggle('show', step === 'aim');
     $('row-aim2').classList.toggle('show', step === 'aim');
     $('row-stab').classList.toggle('show', step === 'aim');
+    $('row-type').classList.toggle('show', step === 'aim');
     $('fieldBar').classList.toggle('show', m === 'field');
     $('mArrow').classList.toggle('on', m === 'arrow');
     pad.textContent = {ball: 'パッド：玉を少しずつ動かす', place: 'パッド：選んだ敵・ブロックを少しずつ動かす',
@@ -1128,7 +1172,9 @@
   $('shCircle').onclick = () => setShape('circle');
   $('shRect').onclick = () => setShape('rect');
   $('wobble').onclick = () => { S.wobble = S.wobble === 0 ? 0.5 : S.wobble === 0.5 ? 1 : 0; syncUI(); persist(); draw(); };
-  $('pierce').onclick = () => { S.pierce = !S.pierce; syncUI(); persist(); draw(); };
+  $('tRef').onclick = () => { S.pierce = false; syncUI(); persist(); draw(); };
+  $('tPie').onclick = () => { S.pierce = true; syncUI(); persist(); draw(); };
+  $('tAB').onclick = () => { S.antiBlock = !S.antiBlock; syncUI(); persist(); draw(); };
   $('dim').onclick = () => { S.dim = !S.dim; syncUI(); persist(); draw(); };
   $('resetField').onclick = () => {
     S.field = {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH};
@@ -1141,7 +1187,8 @@
     $('bv').textContent = S.bounces;
     $('radius').value = Math.round(S.r); $('rv').textContent = Math.round(S.r);
     $('pull').classList.toggle('on', S.pointAim);
-    $('pierce').classList.toggle('on', S.pierce);
+    $('tRef').classList.toggle('on', !S.pierce); $('tPie').classList.toggle('on', S.pierce);
+    $('tAB').classList.toggle('on', S.antiBlock);
     $('wobble').textContent = S.wobble ? `ブレ幅 ±${S.wobble}°` : 'ブレ幅 なし';
     $('wobble').classList.toggle('on', S.wobble > 0);
     $('width').classList.toggle('on', S.showWidth);
