@@ -96,7 +96,7 @@
     <button id="wobble">ブレ幅 ±0.5°</button>
     <button id="pierce">貫通タイプ</button>
     <button id="pull">タッチした方向に飛ばす</button>
-    <label class="sl">玉の当たり半径 <input id="radius" type="range" min="5" max="150" value="35"><b id="rv">35</b></label>
+    <label class="sl">玉の当たり半径 <input id="radius" type="range" min="20" max="120" value="55"><b id="rv">55</b></label>
     <div class="small" style="text-align:right" id="ver"></div>
   </div>
 </div>
@@ -104,7 +104,7 @@
 
 <script>
 (() => {
-  const VERSION = '1.8';
+  const VERSION = '1.9';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -136,7 +136,7 @@
   const S = {
     field: {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH},
     ball: {x: IW * .5, y: IH * .64},
-    r: 35,
+    r: 55,   // ball radius (blocks/enemies). Walls: center stops at x=55..1115 of 1170 = screen edge minus this radius
     enemies: [],
     blocks: [],
     wobble: 0.5,
@@ -171,7 +171,7 @@
     if (!saved) { saved = JSON.parse(localStorage.getItem('monst-guide-v2') || 'null'); if (saved) delete saved.r; }
     if (saved && saved.field && ['l', 't', 'r', 'b'].every(k => Math.abs(saved.field[k] - OLD_DEFAULT[k]) < .002))
       saved.field = {...DEFAULT_FIELD};   // untouched old default -> new calibrated default
-    if (saved && saved.r && Math.abs(saved.r - 80 / 1170) < .002) delete saved.r;   // old visual size -> measured hit radius
+    if (saved && saved.r && (Math.abs(saved.r - 80 / 1170) < .002 || Math.abs(saved.r - 35 / 1170) < .002)) delete saved.r;   // old visual size -> measured hit radius
     if (saved) fromRatio(saved);
   } catch (e) {}
   const persist = () => { try { localStorage.setItem('monst-guide-v3', JSON.stringify(toRatio())); } catch (e) {} };
@@ -227,7 +227,7 @@
       }
       let hitB = -1, flipX = false, flipY = false;
       S.blocks.forEach((B, k) => {
-        const l = Math.min(B.l, B.r) - pad, r = Math.max(B.l, B.r) + pad, tp = Math.min(B.t, B.b) - pad, bt = Math.max(B.t, B.b) + pad;
+        const rb2 = S.r, l = Math.min(B.l, B.r) - rb2, r = Math.max(B.l, B.r) + rb2, tp = Math.min(B.t, B.b) - rb2, bt = Math.max(B.t, B.b) + rb2;
         if (x > l && x < r && y > tp && y < bt) return;       // starting inside: ignore
         let txn, txf, tyn, tyf;
         if (Math.abs(dx) < 1e-9) { if (x <= l || x >= r) return; txn = -Infinity; txf = Infinity; }
