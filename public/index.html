@@ -96,7 +96,7 @@
 
 <script>
 (() => {
-  const VERSION = '1.4';
+  const VERSION = '1.5';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -118,10 +118,11 @@
   // ---- state (all in image-pixel coordinates) ----
   let img = null;                    // HTMLImageElement or null
   let IW = 1170, IH = 2532;          // virtual size when no image (iPhone screenshot)
-  const DEFAULT_FIELD = {l: .035, t: .187, r: .965, b: .676};   // ratio of image size
-  // Measured from gameplay video (v1.4): the ball CENTER travels to ~8px (of 1170) inside the
-  // visible wall line. The character's size does not push the bounce point inward.
-  const WALL_PAD = 8 / 1170;
+  // ratio of image size. Calibrated from 2 gameplay videos (iPhone 1170x2532):
+  // ball CENTER bounces at x=52..1117, y=480..1692 (wall line minus WALL_PAD).
+  const DEFAULT_FIELD = {l: 40 / 1170, t: 468 / 2532, r: 1129 / 1170, b: 1704 / 2532};
+  const OLD_DEFAULT = {l: .035, t: .187, r: .965, b: .676};
+  const WALL_PAD = 12 / 1170;
   const wallPad = () => WALL_PAD * IW;
   const S = {
     field: {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH},
@@ -150,6 +151,8 @@
   try {
     let saved = JSON.parse(localStorage.getItem('monst-guide-v3') || 'null');
     if (!saved) { saved = JSON.parse(localStorage.getItem('monst-guide-v2') || 'null'); if (saved) delete saved.r; }
+    if (saved && saved.field && ['l', 't', 'r', 'b'].every(k => Math.abs(saved.field[k] - OLD_DEFAULT[k]) < .002))
+      saved.field = {...DEFAULT_FIELD};   // untouched old default -> new calibrated default
     if (saved) fromRatio(saved);
   } catch (e) {}
   const persist = () => { try { localStorage.setItem('monst-guide-v3', JSON.stringify(toRatio())); } catch (e) {} };
