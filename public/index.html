@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="補助線">
+<meta name="theme-color" content="#0f1115">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.json">
+<title>反射補助線ツール</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaef; --muted:#8b93a3;
+    --accent:#ffcf3f; --accent2:#4fd1ff; --danger:#ff6b6b;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:14px}
+  body{display:flex;flex-direction:column;overflow:hidden}
+  #stage{flex:1;position:relative;min-height:0;margin-top:env(safe-area-inset-top)}
+  canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+  #hint{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(0,0,0,.6);
+    padding:6px 12px;border-radius:999px;font-size:12px;color:#fff;pointer-events:none;white-space:nowrap}
+  #panel{background:var(--panel);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  button,.btn{appearance:none;border:1px solid var(--line);background:#222733;color:var(--text);
+    border-radius:8px;padding:8px 9px;font-size:13px;white-space:nowrap;font-weight:600;cursor:pointer;line-height:1}
+  button:active{transform:scale(.97)}
+  button.on{background:var(--accent);color:#1a1a1a;border-color:var(--accent)}
+  .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{border:0;border-radius:0;background:transparent}
+  .seg button.on{background:var(--accent);color:#1a1a1a}
+  label.sl{display:flex;align-items:center;gap:8px;flex:1;min-width:0;color:var(--muted);font-size:12px;white-space:nowrap}
+  label.sl input{flex:1;min-width:0;width:60px;accent-color:var(--accent)}
+  label.sl b{color:var(--text);min-width:24px;text-align:right}
+  #angle{font-variant-numeric:tabular-nums;font-weight:700;color:var(--accent);min-width:64px;text-align:center;font-size:15px}
+  .grow{flex:1}
+  input[type=file]{display:none}
+  .small{font-size:11px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="hint">玉をドラッグで移動／それ以外をタッチで方向</div>
+</div>
+<div id="panel">
+  <div class="row" style="flex-wrap:nowrap;gap:5px">
+    <label class="btn" for="file">📷 画像</label>
+    <input id="file" type="file" accept="image/*">
+    <div class="seg">
+      <button id="mAim" class="on">照準</button>
+      <button id="mField">枠調整</button>
+    </div>
+    <button id="pull" title="モンストと同じく引っ張った逆方向に飛ぶ">引っ張り</button>
+    <button id="pin">固定</button>
+    <button id="clearPins" title="固定した線を消す">✕</button>
+  </div>
+  <div class="row">
+    <button data-da="-1">−1°</button>
+    <button data-da="-0.1">−.1</button>
+    <span id="angle">0.0°</span>
+    <button data-da="0.1">+.1</button>
+    <button data-da="1">+1°</button>
+    <span class="grow"></span>
+    <button id="resetField" style="display:none" title="枠を初期位置に戻す">↺枠</button>
+    <button id="width" class="on">玉幅</button>
+  </div>
+  <div class="row" style="flex-wrap:nowrap;gap:16px">
+    <label class="sl">反射 <input id="bounces" type="range" min="1" max="15" value="5"><b id="bv">5</b></label>
+    <label class="sl">玉 <input id="radius" type="range" min="10" max="195" value="80"><b id="rv">62</b></label>
+  </div>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const hint = document.getElementById('hint');
+  const loupe = document.createElement('canvas');
+
+  // ---- state (all in image-pixel coordinates) ----
+  let img = null;                    // HTMLImageElement or null
+  let IW = 1170, IH = 2532;          // virtual size when no image (iPhone screenshot)
+  const DEFAULT_FIELD = {l: .035, t: .187, r: .965, b: .676};   // ratio of image size
+  const S = {
+    field: {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH},
+    ball: {x: IW * .5, y: IH * .64},
+    r: 80,
+    angle: -60,                      // degrees, 0 = right, negative = up
+    bounces: 5,
+    pull: false,
+    showWidth: true,
+    pins: []
+  };
+  let mode = 'aim';
+
+  // restore light prefs
+  const toRatio = () => ({
+    field: {l: S.field.l / IW, t: S.field.t / IH, r: S.field.r / IW, b: S.field.b / IH},
+    ball: {x: S.ball.x / IW, y: S.ball.y / IH},
+    r: S.r / IW, angle: S.angle, bounces: S.bounces, pull: S.pull, showWidth: S.showWidth
+  });
+  const fromRatio = R => {
+    if (R.field) S.field = {l: R.field.l * IW, t: R.field.t * IH, r: R.field.r * IW, b: R.field.b * IH};
+    if (R.ball) S.ball = {x: R.ball.x * IW, y: R.ball.y * IH};
+    if (R.r) S.r = R.r * IW;
+    ['angle', 'bounces', 'pull', 'showWidth'].forEach(k => { if (k in R) S[k] = R[k]; });
+  };
+  try {
+    let saved = JSON.parse(localStorage.getItem('monst-guide-v3') || 'null');
+    if (!saved) { saved = JSON.parse(localStorage.getItem('monst-guide-v2') || 'null'); if (saved) delete saved.r; }
+    if (saved) fromRatio(saved);
+  } catch (e) {}
+  const persist = () => { try { localStorage.setItem('monst-guide-v3', JSON.stringify(toRatio())); } catch (e) {} };
+
+  // ---- view transform ----
+  let scale = 1, ox = 0, oy = 0, dpr = 1;
+  function layout() {
+    dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth, h = cv.clientHeight;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    // aim mode: show only the field (+ small margin); field mode: whole screenshot
+    let V;
+    if (mode === 'field') V = {x: 0, y: 0, w: IW, h: IH};
+    else {
+      const f = S.field, m = Math.max(S.r * .7, IW * .015);
+      V = {x: f.l - m, y: f.t - m, w: f.r - f.l + 2 * m, h: f.b - f.t + 2 * m};
+    }
+    scale = Math.min(w / V.w, h / V.h);
+    ox = (w - V.w * scale) / 2 - V.x * scale;
+    oy = (h - V.h * scale) / 2 - V.y * scale;
+    draw();
+  }
+  const toS = (x, y) => [ox + x * scale, oy + y * scale];
+  const toI = (sx, sy) => [(sx - ox) / scale, (sy - oy) / scale];
+
+  // ---- reflection ----
+  function trace(bx, by, angDeg, r, n) {
+    const f = S.field;
+    const xmin = f.l + r, xmax = f.r - r, ymin = f.t + r, ymax = f.b - r;
+    if (xmin >= xmax || ymin >= ymax) return [[bx, by]];
+    let x = bx, y = by;   // may start slightly outside; first contact bounces it back
+    const a = angDeg * Math.PI / 180;
+    let dx = Math.cos(a), dy = Math.sin(a);
+    const pts = [[x, y]];
+    for (let i = 0; i <= n; i++) {
+      const tx = dx > 1e-9 ? (xmax - x) / dx : dx < -1e-9 ? (xmin - x) / dx : Infinity;
+      const ty = dy > 1e-9 ? (ymax - y) / dy : dy < -1e-9 ? (ymin - y) / dy : Infinity;
+      const t = Math.max(0, Math.min(tx, ty));
+      if (!isFinite(t)) break;
+      x += dx * t; y += dy * t;
+      pts.push([x, y]);
+      const eps = 1e-6;
+      if (tx <= t + eps) dx = -dx;
+      if (ty <= t + eps) dy = -dy;
+    }
+    return pts;
+  }
+
+  // ---- drawing ----
+  const COLORS = ['#ffcf3f', '#4fd1ff', '#ff7bd5', '#7dff9a', '#ff9f43', '#b48cff'];
+
+  function drawPath(pts, color, alpha, numbered) {
+    const sp = pts.map(p => toS(p[0], p[1]));
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.lineJoin = ctx.lineCap = 'round';
+    if (S.showWidth) {
+      ctx.strokeStyle = color; ctx.globalAlpha = alpha * 0.18;
+      ctx.lineWidth = S.r * 2 * scale;
+      ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke();
+      ctx.globalAlpha = alpha;
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.lineWidth = 5;
+    ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+    ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke();
+    if (numbered) {
+      ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let i = 1; i < sp.length - 1; i++) {
+        const [x, y] = sp[i];
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#111'; ctx.fillText(i, x, y + .5);
+      }
+      // arrow on first segment
+      if (sp.length > 1) {
+        const [x0, y0] = sp[0], [x1, y1] = sp[1];
+        const L = Math.hypot(x1 - x0, y1 - y0);
+        if (L > 30) {
+          const ux = (x1 - x0) / L, uy = (y1 - y0) / L;
+          const ax = x0 + ux * Math.min(L * .5, 90), ay = y0 + uy * Math.min(L * .5, 90);
+          ctx.fillStyle = color; ctx.beginPath();
+          ctx.moveTo(ax + ux * 10, ay + uy * 10);
+          ctx.lineTo(ax - ux * 6 - uy * 7, ay - uy * 6 + ux * 7);
+          ctx.lineTo(ax - ux * 6 + uy * 7, ay - uy * 6 - ux * 7);
+          ctx.closePath(); ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  let dragInfo = null;
+
+  function draw() {
+    const w = cv.clientWidth, h = cv.clientHeight;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const [x0, y0] = toS(0, 0);
+    if (img) {
+      ctx.drawImage(img, x0, y0, IW * scale, IH * scale);
+    } else {
+      ctx.fillStyle = '#151922'; ctx.fillRect(x0, y0, IW * scale, IH * scale);
+      ctx.strokeStyle = '#1f2531'; ctx.lineWidth = 1;
+      for (let gx = 0; gx <= IW; gx += 90) { const [a] = toS(gx, 0); ctx.beginPath(); ctx.moveTo(a, y0); ctx.lineTo(a, y0 + IH * scale); ctx.stroke(); }
+      for (let gy = 0; gy <= IH; gy += 90) { const [, b] = toS(0, gy); ctx.beginPath(); ctx.moveTo(x0, b); ctx.lineTo(x0 + IW * scale, b); ctx.stroke(); }
+      ctx.fillStyle = '#5b6475'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('「📷 画像」でステージのスクショを読み込み', w / 2, y0 + 200 * scale);
+    }
+
+    // field
+    const f = S.field;
+    const [fl, ft] = toS(f.l, f.t), [fr, fb] = toS(f.r, f.b);
+    ctx.save();
+    ctx.fillStyle = mode === 'field' ? 'rgba(0,0,0,.35)' : 'rgba(0,0,0,.65)';
+    ctx.beginPath(); ctx.rect(x0, y0, IW * scale, IH * scale); ctx.rect(fl, ft, fr - fl, fb - ft); ctx.fill('evenodd');
+    ctx.strokeStyle = mode === 'field' ? '#ff6b6b' : 'rgba(255,255,255,.55)';
+    ctx.lineWidth = mode === 'field' ? 2.5 : 1.5;
+    ctx.setLineDash(mode === 'field' ? [] : [6, 5]);
+    ctx.strokeRect(fl, ft, fr - fl, fb - ft);
+    if (mode === 'field') {
+      ctx.fillStyle = '#ff6b6b';
+      [[fl, ft], [fr, ft], [fl, fb], [fr, fb], [(fl + fr) / 2, ft], [(fl + fr) / 2, fb], [fl, (ft + fb) / 2], [fr, (ft + fb) / 2]]
+        .forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill(); });
+    }
+    ctx.restore();
+
+    // pinned
+    S.pins.forEach((p, i) => drawPath(trace(p.x, p.y, p.angle, p.r, p.bounces), COLORS[(i + 1) % COLORS.length], .7, false));
+
+    // current
+    const pts = trace(S.ball.x, S.ball.y, S.angle, S.r, S.bounces);
+    drawPath(pts, COLORS[0], 1, true);
+
+    // ball
+    const [bx, by] = toS(S.ball.x, S.ball.y);
+    ctx.save();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.fillStyle = 'rgba(255,207,63,.18)';
+    ctx.beginPath(); ctx.arc(bx, by, S.r * scale, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // pull indicator
+    if (dragInfo && dragInfo.kind === 'aim' && S.pull) {
+      ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(dragInfo.sx, dragInfo.sy); ctx.stroke(); ctx.restore();
+    }
+
+    // loupe while dragging
+    if (dragInfo) drawLoupe(dragInfo.sx, dragInfo.sy);
+
+    document.getElementById('angle').textContent = displayAngle() + '°';
+  }
+
+  function displayAngle() {
+    // 0° = straight up, clockwise positive (−180〜180)
+    let a = S.angle + 90;
+    a = ((a + 180) % 360 + 360) % 360 - 180;
+    return a.toFixed(1);
+  }
+
+  function drawLoupe(sx, sy) {
+    const size = 120, zoom = 3;
+    const src = size / zoom;
+    loupe.width = size * dpr; loupe.height = size * dpr;
+    const lc = loupe.getContext('2d');
+    lc.imageSmoothingEnabled = false;
+    lc.drawImage(cv, (sx - src / 2) * dpr, (sy - src / 2) * dpr, src * dpr, src * dpr, 0, 0, size * dpr, size * dpr);
+    const w = cv.clientWidth;
+    const lx = sx < w / 2 ? w - size - 10 : 10, ly = 10;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.beginPath(); ctx.arc(lx + size / 2, ly + size / 2, size / 2, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(loupe, lx, ly, size, size);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(lx + size / 2 - 8, ly + size / 2); ctx.lineTo(lx + size / 2 + 8, ly + size / 2);
+    ctx.moveTo(lx + size / 2, ly + size / 2 - 8); ctx.lineTo(lx + size / 2, ly + size / 2 + 8); ctx.stroke();
+    ctx.restore();
+    ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(lx + size / 2, ly + size / 2, size / 2, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  }
+
+  // ball center may go a little past the frame line
+  function clampBall() {
+    const f = S.field, k = S.r * .5;
+    S.ball.x = Math.min(Math.max(S.ball.x, f.l - k), f.r + k);
+    S.ball.y = Math.min(Math.max(S.ball.y, f.t - k), f.b + k);
+  }
+
+  // ---- input ----
+  function pos(e) { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+
+  function setAimFrom(sx, sy) {
+    const [ix, iy] = toI(sx, sy);
+    const bx = S.ball.x, by = S.ball.y;
+    let dx = ix - bx, dy = iy - by;
+    if (Math.hypot(dx, dy) < 2) return;
+    if (S.pull) { dx = -dx; dy = -dy; }
+    S.angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  }
+
+  cv.addEventListener('pointerdown', e => {
+    cv.setPointerCapture(e.pointerId);
+    const [sx, sy] = pos(e);
+    if (mode === 'field') {
+      const f = S.field; const [fl, ft] = toS(f.l, f.t), [fr, fb] = toS(f.r, f.b);
+      const tol = 26;
+      const edges = {
+        l: Math.abs(sx - fl) < tol && sy > ft - tol && sy < fb + tol,
+        r: Math.abs(sx - fr) < tol && sy > ft - tol && sy < fb + tol,
+        t: Math.abs(sy - ft) < tol && sx > fl - tol && sx < fr + tol,
+        b: Math.abs(sy - fb) < tol && sx > fl - tol && sx < fr + tol,
+      };
+      const sel = Object.keys(edges).filter(k => edges[k]);
+      if (sel.length) dragInfo = {kind: 'field', edges: sel, sx, sy};
+      else if (sx > fl && sx < fr && sy > ft && sy < fb) {
+        const [ix, iy] = toI(sx, sy);
+        dragInfo = {kind: 'fieldMove', start: [ix, iy], orig: {...f}, sx, sy};
+      }
+    } else {
+      const [bx, by] = toS(S.ball.x, S.ball.y);
+      const hitR = Math.max(S.r * scale, 22);
+      if (Math.hypot(sx - bx, sy - by) < hitR) {
+        const [ix, iy] = toI(sx, sy);
+        dragInfo = {kind: 'ball', off: [S.ball.x - ix, S.ball.y - iy], sx, sy};
+      } else {
+        dragInfo = {kind: 'aim', sx, sy};
+        setAimFrom(sx, sy);
+      }
+    }
+    hint.style.display = 'none';
+    draw();
+  });
+
+  cv.addEventListener('pointermove', e => {
+    if (!dragInfo) return;
+    const [sx, sy] = pos(e);
+    dragInfo.sx = sx; dragInfo.sy = sy;
+    const [ix, iy] = toI(sx, sy);
+    if (dragInfo.kind === 'ball') {
+      S.ball.x = ix + dragInfo.off[0]; S.ball.y = iy + dragInfo.off[1]; clampBall();
+    } else if (dragInfo.kind === 'aim') {
+      setAimFrom(sx, sy);
+    } else if (dragInfo.kind === 'field') {
+      const f = S.field, min = 40;
+      for (const k of dragInfo.edges) {
+        if (k === 'l') f.l = Math.min(ix, f.r - min);
+        if (k === 'r') f.r = Math.max(ix, f.l + min);
+        if (k === 't') f.t = Math.min(iy, f.b - min);
+        if (k === 'b') f.b = Math.max(iy, f.t + min);
+      }
+    } else if (dragInfo.kind === 'fieldMove') {
+      const dx = ix - dragInfo.start[0], dy = iy - dragInfo.start[1], o = dragInfo.orig;
+      Object.assign(S.field, {l: o.l + dx, r: o.r + dx, t: o.t + dy, b: o.b + dy});
+    }
+    draw();
+  });
+
+  const end = () => {
+    if (!dragInfo) return;
+    dragInfo = null; clampBall(); persist(); draw();
+  };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', end);
+
+  // ---- controls ----
+  const $ = id => document.getElementById(id);
+  function setMode(m) {
+    mode = m;
+    $('mAim').classList.toggle('on', m === 'aim');
+    $('mField').classList.toggle('on', m === 'field');
+    $('resetField').style.display = m === 'field' ? '' : 'none';
+    hint.style.display = '';
+    hint.textContent = m === 'aim' ? '玉をドラッグで移動／それ以外をタッチで方向'
+                                   : '赤枠の辺・角をドラッグで調整（終わったら「照準」に戻る）';
+    layout();
+  }
+  $('mAim').onclick = () => setMode('aim');
+  $('mField').onclick = () => setMode(mode === 'field' ? 'aim' : 'field');
+  $('resetField').onclick = () => {
+    S.field = {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH};
+    persist(); layout();
+  };
+
+  document.querySelectorAll('[data-da]').forEach(b => {
+    b.onclick = () => { S.angle += parseFloat(b.dataset.da); persist(); draw(); };
+  });
+
+  const syncUI = () => {
+    $('bounces').value = S.bounces; $('bv').textContent = S.bounces;
+    $('radius').value = Math.round(S.r); $('rv').textContent = Math.round(S.r);
+    $('pull').classList.toggle('on', S.pull);
+    $('width').classList.toggle('on', S.showWidth);
+  };
+  $('bounces').oninput = e => { S.bounces = +e.target.value; $('bv').textContent = S.bounces; persist(); draw(); };
+  $('radius').oninput = e => { S.r = +e.target.value; $('rv').textContent = S.r; clampBall(); persist(); layout(); };
+  $('pull').onclick = () => { S.pull = !S.pull; S.angle += 180; syncUI(); persist(); draw(); };
+  $('width').onclick = () => { S.showWidth = !S.showWidth; syncUI(); persist(); draw(); };
+  $('pin').onclick = () => { S.pins.push({x: S.ball.x, y: S.ball.y, angle: S.angle, r: S.r, bounces: S.bounces}); draw(); };
+  $('clearPins').onclick = () => { S.pins = []; draw(); };
+
+  function loadFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => {
+      const R = toRatio();               // frame stays fixed (kept as ratio of screen size)
+      img = im; IW = im.naturalWidth; IH = im.naturalHeight;
+      fromRatio(R);
+      $('radius').max = Math.round(IW / 6);
+      S.pins = [];
+      syncUI();
+      layout();
+      persist();
+      setMode('aim');
+    };
+    im.src = url;
+  }
+  $('file').onchange = e => loadFile(e.target.files[0]);
+  window.addEventListener('paste', e => {
+    const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+    if (it) loadFile(it.getAsFile());
+  });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); });
+
+  window.addEventListener('resize', layout);
+  syncUI();
+  layout();
+})();
+</script>
+</body>
+</html>
