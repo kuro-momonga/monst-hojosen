@@ -145,7 +145,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.6';
+  const VERSION = '2.7';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -418,7 +418,7 @@
   // ---- enemy hitbox: "カクカクの丸" = a circle made of stacked axis-aligned steps ----
   // Guide video: off enemies the ball reflects exactly like off walls/blocks (only x or y flips);
   // odd bounces appear only at a few angles = the step corners. e.R = radius of the stepped circle.
-  const STEPS = 4;   // steps per half (top/bottom)
+  const STEPS = 12;  // steps per half (top/bottom)
   function stepRects(e) {
     const out = [];
     for (let k = 0; k < STEPS; k++) {
