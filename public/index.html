@@ -61,7 +61,7 @@
 <body>
 <div id="stage">
   <canvas id="cv"></canvas>
-  <div id="hint">玉をドラッグで移動／それ以外をタッチで方向</div>
+  <div id="hint">引っ張って狙う／玉を長押しで移動</div>
   <div id="fieldBar"><button id="resetField">↺ 初期位置</button><button id="fieldDone" class="on">完了</button></div>
   <div id="enemyBar" class="bar"><button id="eDel">選択を削除</button><button id="eClear">全部消す</button><button id="enemyDone" class="on">完了</button></div>
 </div>
@@ -92,7 +92,7 @@
     <button id="mField">枠を調整する</button>
     <button id="width">玉の通り道を表示</button>
     <button id="pierce">貫通タイプ</button>
-    <button id="pull">引っ張り操作</button>
+    <button id="pull">タッチした方向に飛ばす</button>
     <label class="sl">玉の当たり半径 <input id="radius" type="range" min="5" max="150" value="35"><b id="rv">35</b></label>
     <div class="small" style="text-align:right" id="ver"></div>
   </div>
@@ -101,7 +101,7 @@
 
 <script>
 (() => {
-  const VERSION = '1.6';
+  const VERSION = '1.7';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -137,7 +137,7 @@
     pierce: false,
     angle: -60,                      // degrees, 0 = right, negative = up
     bounces: 5,
-    pull: false,
+    pointAim: false,   // false = Monst-style pull (default), true = touch the target direction
     showWidth: true,
     pins: []
   };
@@ -147,14 +147,14 @@
   const toRatio = () => ({
     field: {l: S.field.l / IW, t: S.field.t / IH, r: S.field.r / IW, b: S.field.b / IH},
     ball: {x: S.ball.x / IW, y: S.ball.y / IH},
-    r: S.r / IW, angle: S.angle, bounces: S.bounces, pull: S.pull, showWidth: S.showWidth, pierce: S.pierce,
+    r: S.r / IW, angle: S.angle, bounces: S.bounces, pointAim: S.pointAim, showWidth: S.showWidth, pierce: S.pierce,
     enemies: S.enemies.map(e => ({x: e.x / IW, y: e.y / IH, R: e.R / IW}))
   });
   const fromRatio = R => {
     if (R.field) S.field = {l: R.field.l * IW, t: R.field.t * IH, r: R.field.r * IW, b: R.field.b * IH};
     if (R.ball) S.ball = {x: R.ball.x * IW, y: R.ball.y * IH};
     if (R.r) S.r = R.r * IW;
-    ['angle', 'bounces', 'pull', 'showWidth', 'pierce'].forEach(k => { if (k in R) S[k] = R[k]; });
+    ['angle', 'bounces', 'pointAim', 'showWidth', 'pierce'].forEach(k => { if (k in R) S[k] = R[k]; });
     if (Array.isArray(R.enemies)) S.enemies = R.enemies.map(e => ({x: e.x * IW, y: e.y * IH, R: e.R * IW}));
   };
   try {
@@ -352,14 +352,22 @@
     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
 
-    // pull indicator
-    if (dragInfo && dragInfo.kind === 'aim' && S.pull) {
-      ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(dragInfo.sx, dragInfo.sy); ctx.stroke(); ctx.restore();
+    // pull indicator (Monst-style): from touch start to finger
+    if (dragInfo && dragInfo.kind === 'pull') {
+      ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.setLineDash([5, 5]); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(dragInfo.sx0, dragInfo.sy0); ctx.lineTo(dragInfo.sx, dragInfo.sy); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = 'rgba(255,255,255,.8)';
+      ctx.beginPath(); ctx.arc(dragInfo.sx0, dragInfo.sy0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    // ball being moved (after long-press)
+    if (dragInfo && dragInfo.kind === 'ball') {
+      ctx.save(); ctx.strokeStyle = '#ffd43b'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(bx, by, Math.max(S.r * scale, 14) + 6, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
     }
 
     // loupe while dragging
-    if (dragInfo) drawLoupe(dragInfo.sx, dragInfo.sy);
+    if (dragInfo && dragInfo.kind !== 'pull' && dragInfo.kind !== 'pending') drawLoupe(dragInfo.sx, dragInfo.sy);
 
     document.getElementById('angle').textContent = displayAngle() + '°';
   }
@@ -426,7 +434,6 @@
     const bx = S.ball.x, by = S.ball.y;
     let dx = ix - bx, dy = iy - by;
     if (Math.hypot(dx, dy) < 2) return;
-    if (S.pull) { dx = -dx; dy = -dy; }
     S.angle = Math.atan2(dy, dx) * 180 / Math.PI;
   }
 
@@ -469,13 +476,19 @@
       }
     } else {
       const [bx, by] = toS(S.ball.x, S.ball.y);
-      const hitR = Math.max(S.r * scale, 22);
-      if (Math.hypot(sx - bx, sy - by) < hitR) {
-        const [ix, iy] = toI(sx, sy);
-        dragInfo = {kind: 'ball', off: [S.ball.x - ix, S.ball.y - iy], sx, sy};
+      const hitR = Math.max(S.r * scale, 26);
+      const [ix, iy] = toI(sx, sy);
+      const onBall = Math.hypot(sx - bx, sy - by) < hitR;
+      if (S.pointAim) {
+        if (onBall) dragInfo = {kind: 'ball', off: [S.ball.x - ix, S.ball.y - iy], sx, sy};
+        else { dragInfo = {kind: 'aim', sx, sy}; setAimFrom(sx, sy); }
       } else {
-        dragInfo = {kind: 'aim', sx, sy};
-        setAimFrom(sx, sy);
+        // Monst-style: drag anywhere = pull. Long-press on the ball = move the ball.
+        dragInfo = {kind: onBall ? 'pending' : 'pull', sx, sy, sx0: sx, sy0: sy, off: [S.ball.x - ix, S.ball.y - iy]};
+        if (onBall) {
+          const d = dragInfo;
+          d.timer = setTimeout(() => { if (dragInfo === d && d.kind === 'pending') { d.kind = 'ball'; draw(); } }, 350);
+        }
       }
     }
     hint.style.display = 'none';
@@ -497,6 +510,10 @@
       S.ball.x = ix + dragInfo.off[0]; S.ball.y = iy + dragInfo.off[1]; clampBall();
     } else if (dragInfo.kind === 'aim') {
       setAimFrom(sx, sy);
+    } else if (dragInfo.kind === 'pending' || dragInfo.kind === 'pull') {
+      const vx = dragInfo.sx0 - sx, vy = dragInfo.sy0 - sy;
+      if (dragInfo.kind === 'pending' && Math.hypot(vx, vy) > 10) { clearTimeout(dragInfo.timer); dragInfo.kind = 'pull'; }
+      if (dragInfo.kind === 'pull' && Math.hypot(vx, vy) > 10) S.angle = Math.atan2(vy, vx) * 180 / Math.PI;
     } else if (dragInfo.kind === 'field') {
       const f = S.field, min = 40;
       for (const k of dragInfo.edges) {
@@ -514,6 +531,7 @@
 
   const end = () => {
     if (!dragInfo) return;
+    clearTimeout(dragInfo.timer);
     dragInfo = null; clampBall(); persist(); draw();
   };
   cv.addEventListener('pointerup', end);
@@ -535,7 +553,7 @@
     $('mEnemy').classList.toggle('on', m === 'enemy');
     if (m !== 'enemy') selEnemy = -1;
     hint.style.display = '';
-    hint.textContent = m === 'aim' ? '玉をドラッグで移動／それ以外をタッチで方向'
+    hint.textContent = m === 'aim' ? (S.pointAim ? '玉をドラッグで移動／それ以外をタッチで方向' : '引っ張って狙う／玉を長押しで移動')
                      : m === 'enemy' ? 'タップで敵を置く・引っ張って大きさ／丸の中で移動・ふちで大きさ'
                      : '赤枠の辺・角をドラッグで調整';
     layout();
@@ -559,7 +577,7 @@
   const syncUI = () => {
     $('bv').textContent = S.bounces;
     $('radius').value = Math.round(S.r); $('rv').textContent = Math.round(S.r);
-    $('pull').classList.toggle('on', S.pull);
+    $('pull').classList.toggle('on', S.pointAim);
     $('pierce').classList.toggle('on', S.pierce);
     $('width').classList.toggle('on', S.showWidth);
   };
@@ -567,7 +585,7 @@
   $('bMinus').onclick = () => setBounces(S.bounces - 1);
   $('bPlus').onclick = () => setBounces(S.bounces + 1);
   $('radius').oninput = e => { S.r = +e.target.value; $('rv').textContent = S.r; clampBall(); persist(); layout(); };
-  $('pull').onclick = () => { S.pull = !S.pull; S.angle += 180; syncUI(); persist(); draw(); };
+  $('pull').onclick = () => { S.pointAim = !S.pointAim; syncUI(); persist(); setMode('aim'); };
   $('width').onclick = () => { S.showWidth = !S.showWidth; syncUI(); persist(); draw(); };
   $('pin').onclick = () => { S.pins.push({x: S.ball.x, y: S.ball.y, angle: S.angle, r: S.r, bounces: S.bounces}); draw(); };
   $('clearPins').onclick = () => { S.pins = []; draw(); };
