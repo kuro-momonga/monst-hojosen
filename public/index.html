@@ -153,7 +153,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.23';
+  const VERSION = '2.24';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -427,7 +427,7 @@
     }
     const P = BLOCK * IW;
     return comps.filter(a => { const bw = a.r - a.l + 1, bh = a.b - a.t + 1;
-        return bw >= 100 * u && bw <= 160 * u && bh >= 70 * u && bh <= 150 * u && a.n > .45 * bw * bh; })
+        return bw >= 100 * u && bw <= 160 * u && bh >= 70 * u && bh <= 150 * u && a.n > .28 * bw * bh; })
       .map(a => { const cx = x0 + (a.l + a.r) / 2, l = cx - P / 2, t = y0 + a.t - 12 * u;   // same cell as a normal block
         return {l, t, r: l + P, b: t + BLOCK_H * IW, hard: true}; });
   }
