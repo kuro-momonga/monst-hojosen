@@ -151,7 +151,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.19';
+  const VERSION = '2.20';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -767,7 +767,7 @@
       const r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2], mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
       if (mx < 150 || mx === mn || (mx - mn) / mx < .47 || mx !== r) continue;
       const hue = 60 * (gg - b) / (mx - mn);          // red is max: hue in degrees
-      if (hue >= 16 && hue <= 60) m[i] = 1;            // orange / gold
+      if (hue >= -10 && hue <= 60) m[i] = 1;           // red / orange / gold (the ring colour varies)
     }
     const N = 120, cs = [], sn = [];
     for (let k = 0; k < N; k++) { cs.push(Math.cos(k / N * 2 * Math.PI)); sn.push(Math.sin(k / N * 2 * Math.PI)); }
@@ -779,7 +779,7 @@
       const sc = (v - .5 * inn) / N;
       if (!best || sc > best.s) best = {s: sc, x: cx, y: cy};
     }
-    return best && best.s > .4 ? best : null;
+    return best && best.s > .2 ? best : null;   // ring may be partly off-screen or hidden
   }
 
   // fallback: find the round character ball itself (strong circular edge, radius ~80-115px of 1170)
