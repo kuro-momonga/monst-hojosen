@@ -151,7 +151,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.18';
+  const VERSION = '2.19';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -780,6 +780,43 @@
       if (!best || sc > best.s) best = {s: sc, x: cx, y: cy};
     }
     return best && best.s > .4 ? best : null;
+  }
+
+  // fallback: find the round character ball itself (strong circular edge, radius ~80-115px of 1170)
+  function findBall(tx, tyy) {
+    if (!img) return null;
+    const u = IW / 1170, S0 = 150 * u, R1 = 116 * u;
+    const x0 = Math.max(0, Math.round(tx - S0 - R1 - 2)), y0 = Math.max(0, Math.round(tyy - S0 - R1 - 2));
+    const w = Math.min(IW - x0, Math.round(2 * (S0 + R1) + 4)), h = Math.min(IH - y0, Math.round(2 * (S0 + R1) + 4));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, L = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) L[i] = d[i * 4] * .299 + d[i * 4 + 1] * .587 + d[i * 4 + 2] * .114;
+    const GX = new Float32Array(w * h), GY = new Float32Array(w * h);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      GX[i] = (L[i - w + 1] + 2 * L[i + 1] + L[i + w + 1]) - (L[i - w - 1] + 2 * L[i - 1] + L[i + w - 1]);
+      GY[i] = (L[i + w - 1] + 2 * L[i + w] + L[i + w + 1]) - (L[i - w - 1] + 2 * L[i - w] + L[i - w + 1]);
+    }
+    const N = 96, cs = [], sn = [], buf = new Float32Array(N);
+    for (let k = 0; k < N; k++) { cs.push(Math.cos(k / N * 2 * Math.PI)); sn.push(Math.sin(k / N * 2 * Math.PI)); }
+    const score = (cx, cy, R) => {     // median radial gradient around the circle
+      for (let k = 0; k < N; k++) {
+        const x = Math.round(cx - x0 + cs[k] * R), y = Math.round(cy - y0 + sn[k] * R);
+        if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) return -1;
+        const i = y * w + x; buf[k] = Math.abs(GX[i] * cs[k] + GY[i] * sn[k]);
+      }
+      return buf.slice().sort()[N >> 1];
+    };
+    let best = {s: -1};
+    const scan = (xa, xb, ya, yb, ra, rb, st, rs) => {
+      for (let R = ra; R <= rb; R += rs) for (let cy = ya; cy <= yb; cy += st) for (let cx = xa; cx <= xb; cx += st) {
+        const v = score(cx, cy, R); if (v > best.s) best = {s: v, x: cx, y: cy, R};
+      }
+    };
+    scan(tx - S0, tx + S0, tyy - S0, tyy + S0, 80 * u, 114 * u, 8 * u, 6 * u);
+    const b = best; scan(b.x - 8 * u, b.x + 8 * u, b.y - 8 * u, b.y + 8 * u, b.R - 6 * u, b.R + 6 * u, 2 * u, 2 * u);
+    return best.s > 20 ? best : null;
   }   // image point to magnify while the trackpad is in use
 
   // "+" buttons around the selected block: add a connected block on that side
@@ -1082,7 +1119,7 @@
     if (!dragInfo) return;
     const di = dragInfo;
     if (di.kind === 'ballRel' && Math.hypot(di.sx - di.sx0, di.sy - di.sy0) < 8) {
-      const [ix, iy] = toI(di.sx0, di.sy0), r = findRing(ix, iy);
+      const [ix, iy] = toI(di.sx0, di.sy0), r = findRing(ix, iy) || findBall(ix, iy);
       if (r) { S.ball.x = r.x; S.ball.y = r.y; toast('キャラの輪に合わせました', 1500); }
       else { S.ball.x = ix; S.ball.y = iy; toast('輪が見つからないのでタップした位置に置きました', 2200); }
     }
