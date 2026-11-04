@@ -130,6 +130,7 @@
     <button id="bPlus">＋</button>
     <span class="grow"></span>
     <button id="mArrow">矢印</button>
+    <button id="mFinger">指</button>
     <button id="pin">固定</button>
   </div>
   <div id="pad">パッド</div>
@@ -152,7 +153,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.21';
+  const VERSION = '2.22';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -451,7 +452,7 @@
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     // aim mode: show only the field (+ small margin); field mode: whole screenshot
     let V;
-    if (mode === 'field') V = {x: 0, y: 0, w: IW, h: IH};
+    if (mode === 'field' || mode === 'finger') V = {x: 0, y: 0, w: IW, h: IH};
     else if (mode === 'ball' && ballZoom) {   // zoomed view around the ball for precise placement
       const zw = 560 * IW / 1170, zh = zw * h / w;
       V = {x: ballZoom[0] - zw / 2, y: ballZoom[1] - zh / 2, w: zw, h: zh};
@@ -685,7 +686,7 @@
     ctx.restore();
 
     // pinned
-    const showLines = mode === 'aim' || mode === 'arrow';   // ① 玉 / ② 配置 では線を出さない
+    const showLines = mode === 'aim' || mode === 'arrow' || mode === 'finger';   // ① 玉 / ② 配置 では線を出さない
     if (showLines) S.pins.forEach(p => drawPinned(trace(p.x, p.y, p.angle, wallPad(), p.bounces)));
 
     // current
@@ -726,12 +727,13 @@
     }
 
     // loupe while dragging
-    if (mode === 'arrow') drawArrowMode(pts);
+    if (mode === 'finger') drawFingerMode();
+    else if (mode === 'arrow') drawArrowMode(pts);
     else if (padFocus) { const [fx, fy] = toS(padFocus[0], padFocus[1]); drawLoupe(fx, fy); }
     else if (dragInfo && dragInfo.kind !== 'pull' && dragInfo.kind !== 'pending') drawLoupe(dragInfo.sx, dragInfo.sy);
 
     document.getElementById('angle').textContent = displayAngle() + '°';
-    if (mode === 'aim' || mode === 'arrow') updateStability(); else $('stab').style.display = 'none';
+    if (mode === 'aim' || mode === 'arrow' || mode === 'finger') updateStability(); else $('stab').style.display = 'none';
   }
 
   // ---- stability: how far can the angle drift before the route (what it hits, in order) changes? ----
@@ -848,6 +850,60 @@
     let a = S.angle + 90;
     a = ((a + 180) % 360 + 360) % 360 - 180;
     return a.toFixed(1);
+  }
+
+  // ---- finger mode: the shot direction is the reverse of the finger's drag (A = touch down, B = release).
+  // Pick two background landmarks far apart → a few px of finger error = a tiny angle error.
+  let FA = null, FL = null;   // A (image px) and drag length
+  const fdir = () => { const a = S.angle * Math.PI / 180; return [Math.cos(a), Math.sin(a)]; };
+  function maxBack(A) {      // distance from A against the shot direction to the screenshot edge
+    const [dx, dy] = fdir(), ex = -dx, ey = -dy;
+    const tx = ex > 1e-9 ? (IW - A[0]) / ex : ex < -1e-9 ? -A[0] / ex : Infinity;
+    const ty = ey > 1e-9 ? (IH - A[1]) / ey : ey < -1e-9 ? -A[1] / ey : Infinity;
+    return Math.max(0, Math.min(tx, ty));
+  }
+  function fingerInit() {
+    if (!FA) { const [dx, dy] = fdir(); FA = [IW / 2 + dx * IH * .2, IH * .42 + dy * IH * .2]; }
+    FA = [Math.max(0, Math.min(IW, FA[0])), Math.max(0, Math.min(IH, FA[1]))];
+    const m = maxBack(FA); if (FL == null || FL > m) FL = m;
+  }
+  const fingerB = () => { const [dx, dy] = fdir(); return [FA[0] - dx * FL, FA[1] - dy * FL]; };
+  function rawLoupe(ix, iy, lx, ly, size, label, col) {
+    if (!img) return;
+    const zoom = 2.2, src = size / zoom / scale, [dx, dy] = fdir();
+    ctx.save(); ctx.beginPath(); ctx.arc(lx + size / 2, ly + size / 2, size / 2, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(img, ix - src / 2, iy - src / 2, src, src, lx, ly, size, size);
+    const cx = lx + size / 2, cy = ly + size / 2;
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(cx - dx * size, cy - dy * size); ctx.lineTo(cx + dx * size, cy + dy * size); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, size / 2, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = col; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillRect(cx - 24, ly + size - 6, 48, 18); ctx.fillStyle = '#111'; ctx.fillText(label, cx, ly + size + 7);
+    ctx.restore();
+  }
+  function drawFingerMode() {
+    fingerInit();
+    const B = fingerB(), [ax, ay] = toS(FA[0], FA[1]), [bx, by] = toS(B[0], B[1]), [dx, dy] = fdir();
+    ctx.save();
+    // whole line through A and B
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(ax + dx * 3000, ay + dy * 3000); ctx.lineTo(ax - dx * 3000, ay - dy * 3000); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    // arrow head at B (finger drag direction)
+    ctx.fillStyle = '#7dd3fc'; ctx.beginPath();
+    ctx.moveTo(bx, by); ctx.lineTo(bx + dx * 14 - dy * 8, by + dy * 14 + dx * 8); ctx.lineTo(bx + dx * 14 + dy * 8, by + dy * 14 - dx * 8); ctx.fill();
+    const mark = (x, y, c) => { ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x - 18, y); ctx.lineTo(x + 18, y); ctx.moveTo(x, y - 18); ctx.lineTo(x, y + 18); ctx.stroke(); };
+    mark(ax, ay, '#ffd43b'); mark(bx, by, '#3ddc84');
+    ctx.restore();
+    const w = cv.clientWidth, size = Math.min(150, w / 2 - 16);
+    rawLoupe(FA[0], FA[1], 8, 40, size, '置く', '#ffd43b');
+    rawLoupe(B[0], B[1], w - size - 8, 40, size, '離す', '#3ddc84');
+    const err = Math.atan2(10 * IW / 1170, FL) * 180 / Math.PI;
+    hint.style.display = ''; hint.textContent = `指10pxのずれ ≒ ${err.toFixed(2)}°（長く引くほど正確）`;
   }
 
   // ---- arrow mode: Monst-style arrow on the first segment, tip slides along the line ----
@@ -1005,6 +1061,14 @@
     const [sx, sy] = pos(e);
     const [ix, iy] = toI(sx, sy);
     hint.style.display = 'none';
+    if (mode === 'finger') {
+      fingerInit();
+      const B = fingerB(), [bx, by] = toS(B[0], B[1]);
+      dragInfo = Math.hypot(sx - bx, sy - by) < 40
+        ? {kind: 'fB', sx, sy, sx0: sx, sy0: sy, L0: FL}
+        : {kind: 'fA', sx, sy, lx: sx, ly: sy};
+      draw(); return;
+    }
     if (mode === 'arrow') {   // relative drag like scrolling: the tip moves by the finger's movement along the line
       if (tipD == null) tipPoint(trace(S.ball.x, S.ball.y, S.angle, wallPad(), 0));
       dragInfo = {kind: 'tip', sx, sy, sx0: sx, sy0: sy, d0: tipD}; draw(); return;
@@ -1084,7 +1148,13 @@
     dragInfo.sx = sx; dragInfo.sy = sy;
     const [ix, iy] = toI(sx, sy);
     const k = dragInfo.kind;
-    if (k === 'tip') {
+    if (k === 'fA') {   // move A (B follows, keeping the angle); relative so the finger doesn't hide it
+      FA = [FA[0] + (sx - dragInfo.lx) / scale, FA[1] + (sy - dragInfo.ly) / scale]; dragInfo.lx = sx; dragInfo.ly = sy;
+      fingerInit();
+    } else if (k === 'fB') {   // slide B along the line
+      const [dx, dy] = fdir(), along = -((sx - dragInfo.sx0) * dx + (sy - dragInfo.sy0) * dy) / scale;
+      FL = Math.max(20, Math.min(dragInfo.L0 + along, maxBack(FA)));
+    } else if (k === 'tip') {
       const a = S.angle * Math.PI / 180;
       const along = ((sx - dragInfo.sx0) * Math.cos(a) + (sy - dragInfo.sy0) * Math.sin(a)) / scale;
       tipD = clampTip(dragInfo.d0 + along);
@@ -1159,6 +1229,7 @@
       }
     }
     else if (mode === 'aim') { S.angle += dx * 0.015; }          // ~0.5° per cm
+    else if (mode === 'finger') { fingerInit(); FA = [FA[0] + gx, FA[1] + gy]; fingerInit(); }
     else if (mode === 'arrow') {
       const a = S.angle * Math.PI / 180;
       tipD = clampTip((tipD || 0) + (dx * Math.cos(a) + dy * Math.sin(a)) / scale * .5);
@@ -1183,6 +1254,7 @@
     place: '② 配置：タップで置く／ドラッグで移動／ブロックを選ぶと＋で追加',
     aim: '③ 狙う：引っ張って角度を決める／パッドを左右で微調整',
     arrow: '矢印：角度は固定。なぞって矢印の先に合う目印を探す',
+    finger: '指：黄色に指を置いて緑まで引く。ドラッグで黄色、緑をつかんで長さを変える',
     field: '赤枠の辺・角をドラッグで調整',
   };
   function setMode(m) {
@@ -1190,7 +1262,7 @@
     mode = m;
     try { if (m === 'ball' || m === 'place' || m === 'aim') localStorage.setItem('monst-step', m); } catch (e) {}
     if (m !== 'place') { selEnemy = -1; selBlock = -1; }
-    const step = m === 'arrow' ? 'aim' : m;
+    const step = (m === 'arrow' || m === 'finger') ? 'aim' : m;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.step === step));
     $('row-ball').classList.toggle('show', step === 'ball');
     $('row-place').classList.toggle('show', step === 'place');
@@ -1200,8 +1272,9 @@
     $('row-type').classList.toggle('show', step === 'aim');
     $('fieldBar').classList.toggle('show', m === 'field');
     $('mArrow').classList.toggle('on', m === 'arrow');
+    $('mFinger').classList.toggle('on', m === 'finger');
     pad.textContent = {ball: 'パッド：玉を少しずつ動かす', place: 'パッド：選んだ敵・ブロックを少しずつ動かす',
-                       aim: 'パッド：左右で角度を微調整', arrow: 'パッド：矢印の先を動かす', field: ''}[m];
+                       aim: 'パッド：左右で角度を微調整', arrow: 'パッド：矢印の先を動かす', finger: 'パッド：置く点を少しずつ動かす', field: ''}[m];
     hint.style.display = ''; hint.textContent = HINTS[m] || '';
     syncUI(); syncZoom(); layout();
   }
@@ -1210,6 +1283,7 @@
   $('mField').onclick = () => { closeMenu(); setMode('field'); };
   $('fieldDone').onclick = () => setMode('ball');
   $('zoomBtn').onclick = () => { ballZoom = ballZoom ? null : [S.ball.x, S.ball.y]; syncZoom(); layout(); };
+  $('mFinger').onclick = () => setMode(mode === 'finger' ? 'aim' : 'finger');
   $('mArrow').onclick = () => setMode(mode === 'arrow' ? 'aim' : 'arrow');
   $('eDel').onclick = () => {
     if (selEnemy >= 0) S.enemies.splice(selEnemy, 1);
