@@ -153,7 +153,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.22';
+  const VERSION = '2.23';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -390,8 +390,51 @@
     const dx = e.x - e.ax, dy = e.y - e.ay;
     S.enemies.forEach(o => { if (o !== e && o.g === e.g && o.ax != null) { o.R = e.R; o.x = o.ax + dx; o.y = o.ay + dy; } });
   }
+  // ---- yellow number block (gimmick): bounces like a block and is NOT passed by anti-block ----
+  function detectYellowBlocks() {
+    if (!img) return [];
+    const u = IW / 1170, f = S.field;
+    const x0 = Math.max(0, Math.round(f.l - 20 * u)), y0 = Math.max(0, Math.round(f.t - 20 * u));
+    const w = Math.round(Math.min(IW, f.r + 20 * u) - x0), h = Math.round(Math.min(IH, f.b + 20 * u) - y0);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, m = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
+      if (r > 140 && gg > 110 && b < 60 && r - b > 110 && Math.abs(r - gg) < 60) m[i] = 1;
+    }
+    const seen = new Uint8Array(w * h), comps = [], st = [];
+    for (let i = 0; i < w * h; i++) {
+      if (!m[i] || seen[i]) continue;
+      let a = {l: 1e9, r: -1, t: 1e9, b: -1, n: 0}; st.push(i); seen[i] = 1;
+      while (st.length) {
+        const j = st.pop(), x = j % w, y = (j / w) | 0; a.n++;
+        if (x < a.l) a.l = x; if (x > a.r) a.r = x; if (y < a.t) a.t = y; if (y > a.b) a.b = y;
+        for (const k of [j - 1, j + 1, j - w, j + w]) if (k >= 0 && k < w * h && m[k] && !seen[k] && Math.abs((k % w) - x) <= 1) { seen[k] = 1; st.push(k); }
+      }
+      if (a.n > 30) comps.push(a);
+    }
+    // merge pieces split by the number drawn on the block
+    for (let merged = true; merged;) {
+      merged = false;
+      for (let i = 0; i < comps.length && !merged; i++) for (let j = i + 1; j < comps.length && !merged; j++) {
+        const A = comps[i], B = comps[j], gap = 10 * u;
+        if (A.l - gap <= B.r && B.l - gap <= A.r && A.t - gap <= B.b && B.t - gap <= A.b) {
+          comps[i] = {l: Math.min(A.l, B.l), r: Math.max(A.r, B.r), t: Math.min(A.t, B.t), b: Math.max(A.b, B.b), n: A.n + B.n};
+          comps.splice(j, 1); merged = true;
+        }
+      }
+    }
+    const P = BLOCK * IW;
+    return comps.filter(a => { const bw = a.r - a.l + 1, bh = a.b - a.t + 1;
+        return bw >= 100 * u && bw <= 160 * u && bh >= 70 * u && bh <= 150 * u && a.n > .45 * bw * bh; })
+      .map(a => { const cx = x0 + (a.l + a.r) / 2, l = cx - P / 2, t = y0 + a.t - 12 * u;   // same cell as a normal block
+        return {l, t, r: l + P, b: t + BLOCK_H * IW, hard: true}; });
+  }
   function runDetect(quiet) {
-    const B = detectBlocks(), E = detectEnemies();
+    const Y = detectYellowBlocks(), B = detectBlocks().concat(Y);
+    // the yellow block's stripe looks like an HP bar: drop "enemies" found on it
+    const E = detectEnemies().filter(e => !Y.some(y => e.x > y.l - 20 && e.x < y.r + 20 && e.y + 103 * IW / 1170 > y.t - 20 && e.y + 103 * IW / 1170 < y.b + 40));
     S.blocks = B;
     // keep enemies the user already placed; add detected ones that aren't near an existing circle
     E.forEach(e => { if (!S.enemies.some(o => Math.hypot(o.x - e.x, o.y - e.y) < o.R)) S.enemies.push(e); });
@@ -423,7 +466,7 @@
     ball: {x: S.ball.x / IW, y: S.ball.y / IH},
     r: S.r / IW, angle: S.angle, bounces: S.bounces, pointAim: S.pointAim, showWidth: S.showWidth, pierce: S.pierce, antiBlock: S.antiBlock, dim: S.dim,
     enemies: S.enemies.map(e => ({x: e.x / IW, y: e.y / IH, R: e.R / IW, g: e.g, ax: e.ax == null ? null : e.ax / IW, ay: e.ay == null ? null : e.ay / IH})),
-    blocks: S.blocks.map(b => ({l: b.l / IW, r: b.r / IW, t: b.t / IH, b: b.b / IH})), wobble: S.wobble
+    blocks: S.blocks.map(b => ({l: b.l / IW, r: b.r / IW, t: b.t / IH, b: b.b / IH, hard: !!b.hard})), wobble: S.wobble
   });
   const fromRatio = R => {
     if (R.field) S.field = {l: R.field.l * IW, t: R.field.t * IH, r: R.field.r * IW, b: R.field.b * IH};
@@ -431,7 +474,7 @@
     if (R.r) S.r = R.r * IW;
     ['angle', 'bounces', 'pointAim', 'showWidth', 'pierce', 'antiBlock', 'dim'].forEach(k => { if (k in R) S[k] = R[k]; });
     if ('wobble' in R) S.wobble = R.wobble;
-    if (Array.isArray(R.blocks)) S.blocks = R.blocks.map(b => ({l: b.l * IW, r: b.r * IW, t: b.t * IH, b: b.b * IH}));
+    if (Array.isArray(R.blocks)) S.blocks = R.blocks.map(b => ({l: b.l * IW, r: b.r * IW, t: b.t * IH, b: b.b * IH, hard: !!b.hard}));
     if (Array.isArray(R.enemies)) S.enemies = R.enemies.map(e => ({x: e.x * IW, y: e.y * IH, R: e.R * IW, g: e.g, ax: e.ax == null ? null : e.ax * IW, ay: e.ay == null ? null : e.ay * IH}));
   };
   try {
@@ -542,7 +585,8 @@
         });
       }
       let hitB = -1, flipX = false, flipY = false;
-      if (!S.antiBlock) S.blocks.forEach((B, k) => {
+      S.blocks.forEach((B, k) => {
+        if (S.antiBlock && !B.hard) return;      // anti-block passes normal blocks only
         if (i === 0 && skipB.has(k)) return;
         const rb2 = S.r, l = Math.min(B.l, B.r) - rb2, r = Math.max(B.l, B.r) + rb2, tp = Math.min(B.t, B.b) - rb2, bt = Math.max(B.t, B.b) + rb2;
         if (x > l && x < r && y > tp && y < bt) return;       // starting inside: ignore
@@ -997,6 +1041,11 @@
     S.blocks.map((B, k) => [B, k]).sort((a, b) => a[0].t - b[0].t).forEach(([B, k]) => {
       const [x1, y1] = toS(B.l, B.t), [x2, y2] = toS(B.r, B.b), w = x2 - x1, h = y2 - y1;
       const sel = mode === 'place' && k === selBlock;
+      if (B.hard) {
+        ctx.fillStyle = 'rgba(255,212,59,.35)'; ctx.fillRect(x1, y1, w, h);
+        ctx.strokeStyle = '#ffd43b'; ctx.lineWidth = sel ? 3 : 2; ctx.setLineDash(sel ? [6, 4] : []); ctx.strokeRect(x1, y1, w, h); ctx.setLineDash([]);
+        return;
+      }
       if (blockImg.complete && blockImg.naturalWidth) {
         // sprite: 136x156 drawn inside the 146 cell (5px margin, base shadow hangs below)
         const sc = w / 146.25;
@@ -1163,7 +1212,7 @@
       S.ball.x += (sx - dragInfo.lx) / scale; S.ball.y += (sy - dragInfo.ly) / scale; clampBall();
       dragInfo.lx = sx; dragInfo.ly = sy; padFocus = [S.ball.x, S.ball.y];
     }
-    else if (k === 'block') S.blocks[dragInfo.k] = placeBlock(ix + dragInfo.off[0], iy + dragInfo.off[1], dragInfo.k);
+    else if (k === 'block') S.blocks[dragInfo.k] = {...placeBlock(ix + dragInfo.off[0], iy + dragInfo.off[1], dragInfo.k), hard: S.blocks[dragInfo.k].hard};
     else if (k === 'enemy') {
       const en = S.enemies[dragInfo.k];
       if (dragInfo.how === 'move') { en.x = ix + dragInfo.off[0]; en.y = iy + dragInfo.off[1]; }
@@ -1224,7 +1273,7 @@
       if (selEnemy >= 0) { const en = S.enemies[selEnemy]; en.x += gx; en.y += gy; syncGroup(selEnemy); padFocus = [en.x, en.y]; }
       else if (selBlock >= 0 && blockAcc) {
         blockAcc[0] += gx; blockAcc[1] += gy;
-        S.blocks[selBlock] = placeBlock(blockAcc[0], blockAcc[1], selBlock);
+        S.blocks[selBlock] = {...placeBlock(blockAcc[0], blockAcc[1], selBlock), hard: S.blocks[selBlock].hard};
         padFocus = [S.blocks[selBlock].l, S.blocks[selBlock].t];
       }
     }
