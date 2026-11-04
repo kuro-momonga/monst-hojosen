@@ -100,7 +100,8 @@
     <button id="more" title="その他">⋯</button>
   </div>
   <div class="stepRow" id="row-ball">
-    <span class="small grow">打つキャラをタップ → 自動で輪に合わせます。ずれたらパッドで微調整</span>
+    <span class="small grow">キャラの真ん中をタップ → 拡大されるので、十字をキャラの中心に合わせる</span>
+    <button id="zoomBtn">🔍 全体</button>
     <button class="next" data-go="place">次へ ▶</button>
   </div>
   <div class="stepRow" id="row-place">
@@ -151,7 +152,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.20';
+  const VERSION = '2.21';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -451,6 +452,10 @@
     // aim mode: show only the field (+ small margin); field mode: whole screenshot
     let V;
     if (mode === 'field') V = {x: 0, y: 0, w: IW, h: IH};
+    else if (mode === 'ball' && ballZoom) {   // zoomed view around the ball for precise placement
+      const zw = 560 * IW / 1170, zh = zw * h / w;
+      V = {x: ballZoom[0] - zw / 2, y: ballZoom[1] - zh / 2, w: zw, h: zh};
+    }
     else {
       const f = S.field, m = Math.max(S.r * .7, IW * .015);
       V = {x: f.l - m, y: f.t - m, w: f.r - f.l + 2 * m, h: f.b - f.t + 2 * m};
@@ -753,6 +758,8 @@
     if (b) b.onclick = () => { S.angle += (hi - lo) / 2; persist(); draw(); };
   }
   let padFocus = null;
+  let ballZoom = null;   // [x, y] centre of the zoomed ① 玉 view, or null for the whole field
+  const syncZoom = () => { const b = document.getElementById('zoomBtn'); if (b) { b.textContent = ballZoom ? '🔍 全体' : '🔍 拡大'; b.classList.toggle('on', !!ballZoom); } };
 
   // ---- tap-to-snap: find the orange turn ring near the tapped point ----
   function findRing(tx, tyy) {
@@ -779,7 +786,7 @@
       const sc = (v - .5 * inn) / N;
       if (!best || sc > best.s) best = {s: sc, x: cx, y: cy};
     }
-    return best && best.s > .2 ? best : null;   // ring may be partly off-screen or hidden
+    return best && best.s > .5 ? best : null;   // only a clearly visible ring
   }
 
   // fallback: find the round character ball itself (strong circular edge, radius ~80-115px of 1170)
@@ -1119,9 +1126,11 @@
     if (!dragInfo) return;
     const di = dragInfo;
     if (di.kind === 'ballRel' && Math.hypot(di.sx - di.sx0, di.sy - di.sy0) < 8) {
-      const [ix, iy] = toI(di.sx0, di.sy0), r = findRing(ix, iy) || findBall(ix, iy);
-      if (r) { S.ball.x = r.x; S.ball.y = r.y; toast('キャラの輪に合わせました', 1500); }
-      else { S.ball.x = ix; S.ball.y = iy; toast('輪が見つからないのでタップした位置に置きました', 2200); }
+      const [ix, iy] = toI(di.sx0, di.sy0);
+      // the turn ring changes size/colour or is absent: only snap when a clear ring is found
+      const r = ballZoom ? null : findRing(ix, iy);
+      if (r) { S.ball.x = r.x; S.ball.y = r.y; } else { S.ball.x = ix; S.ball.y = iy; }
+      if (!ballZoom) { ballZoom = [S.ball.x, S.ball.y]; clampBall(); persist(); dragInfo = null; layout(); syncZoom(); return; }
     }
     dragInfo = null; padFocus = null; clampBall(); persist(); draw(); };
   cv.addEventListener('pointerup', end);
@@ -1170,13 +1179,14 @@
 
   // ---- steps ----
   const HINTS = {
-    ball: '① 玉：自分のキャラをタップ（輪に自動で合わせる）／ずれたらドラッグ・パッドで微調整',
+    ball: '① 玉：キャラの真ん中をタップ → 拡大画面でドラッグ・パッドで微調整',
     place: '② 配置：タップで置く／ドラッグで移動／ブロックを選ぶと＋で追加',
     aim: '③ 狙う：引っ張って角度を決める／パッドを左右で微調整',
     arrow: '矢印：角度は固定。なぞって矢印の先に合う目印を探す',
     field: '赤枠の辺・角をドラッグで調整',
   };
   function setMode(m) {
+    if (m !== 'ball') ballZoom = null;
     mode = m;
     try { if (m === 'ball' || m === 'place' || m === 'aim') localStorage.setItem('monst-step', m); } catch (e) {}
     if (m !== 'place') { selEnemy = -1; selBlock = -1; }
@@ -1193,12 +1203,13 @@
     pad.textContent = {ball: 'パッド：玉を少しずつ動かす', place: 'パッド：選んだ敵・ブロックを少しずつ動かす',
                        aim: 'パッド：左右で角度を微調整', arrow: 'パッド：矢印の先を動かす', field: ''}[m];
     hint.style.display = ''; hint.textContent = HINTS[m] || '';
-    syncUI(); layout();
+    syncUI(); syncZoom(); layout();
   }
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setMode(b.dataset.step));
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => setMode(b.dataset.go));
   $('mField').onclick = () => { closeMenu(); setMode('field'); };
   $('fieldDone').onclick = () => setMode('ball');
+  $('zoomBtn').onclick = () => { ballZoom = ballZoom ? null : [S.ball.x, S.ball.y]; syncZoom(); layout(); };
   $('mArrow').onclick = () => setMode(mode === 'arrow' ? 'aim' : 'arrow');
   $('eDel').onclick = () => {
     if (selEnemy >= 0) S.enemies.splice(selEnemy, 1);
