@@ -151,7 +151,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.17';
+  const VERSION = '2.18';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1141,6 +1141,7 @@
   };
   function setMode(m) {
     mode = m;
+    try { if (m === 'ball' || m === 'place' || m === 'aim') localStorage.setItem('monst-step', m); } catch (e) {}
     if (m !== 'place') { selEnemy = -1; selBlock = -1; }
     const step = m === 'arrow' ? 'aim' : m;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.step === step));
@@ -1229,8 +1230,33 @@
 
   // ---- image import ----
   $('btnImg').onclick = () => { closeMenu(); $('file').click(); };
+  // ---- keep the last screenshot across app restarts (IndexedDB) ----
+  const idb = () => new Promise((res, rej) => {
+    const r = indexedDB.open('monst-hojosen', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  async function saveImage(blob) {
+    try { const db = await idb(); db.transaction('kv', 'readwrite').objectStore('kv').put(blob, 'lastImage'); } catch (e) {}
+  }
+  async function restoreImage() {
+    try {
+      const db = await idb();
+      const blob = await new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get('lastImage'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+      if (!blob) return;
+      const im = new Image();
+      im.onload = () => {
+        const R = toRatio(); img = im; IW = im.naturalWidth; IH = im.naturalHeight; fromRatio(R);
+        $('radius').max = Math.round(IW / 6);
+        setMode(savedStep);
+      };
+      im.src = URL.createObjectURL(blob);
+    } catch (e) {}
+  }
+
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
+    saveImage(file);
     const url = URL.createObjectURL(file);
     const im = new Image();
     im.onload = () => {
@@ -1348,7 +1374,9 @@
 
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
+  let savedStep = 'ball'; try { savedStep = localStorage.getItem('monst-step') || 'ball'; } catch (e) {}
   setMode('ball');
+  restoreImage();
 })();
 </script>
 </body>
