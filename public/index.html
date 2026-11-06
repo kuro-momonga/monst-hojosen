@@ -171,7 +171,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.25';
+  const VERSION = '2.26';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1644,7 +1644,7 @@
   const courseStage = () => { if (!curCourse) return null; const c = COURSES.find(x => x.id === curCourse.c); return c && c.stages[curCourse.s] ? {c, st: c.stages[curCourse.s]} : null; };
   function showCourseCard() {
     const cs = courseStage(), el = $('courseCard');
-    if (!cs || mode === 'ball' || mode === 'field' || mode === 'finger' || mode === 'arrow') { el.classList.remove('show'); return; }
+    el.classList.remove('show'); return;   // notes live in the 📚 コース sheet; no overlay on the field
     const g = cs.st.goal, need = [g.mines ? `地雷${g.mines}個` : '', g.walls ? `壁${g.walls}面` : '', g.link ? 'なるべく多くの敵' : ''].filter(Boolean).join('・');
     el.innerHTML = `<div class="cc-h"><span>${esc(cs.c.name)} ${esc(cs.st.n)}</span><button id="ccHide">✕</button></div>` +
       cs.st.pts.map(t => '・' + esc(t)).join('<br>') + `<br><b>探すの目標：${need} → ★を殴る</b>`;
