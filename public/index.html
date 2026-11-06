@@ -58,6 +58,20 @@
     border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:10px;font-size:13px;
     display:none;align-items:center;gap:10px;z-index:9;white-space:nowrap}
   #toast.show{display:flex}
+  #courseCard{display:none;position:absolute;left:8px;right:8px;bottom:8px;background:rgba(15,17,21,.92);border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;font-size:12px;line-height:1.5;max-height:42%;overflow:auto;z-index:4}
+  #courseCard.show{display:block}
+  #courseCard b{color:var(--accent)}
+  #courseCard .cc-h{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+  #courseCard .cc-h span{flex:1;font-weight:700}
+  #courseCard button{padding:5px 8px;font-size:12px}
+  .stg{display:flex;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px;align-items:flex-start}
+  .stg img{width:96px;border-radius:6px;flex:none}
+  .stg .tx{flex:1;font-size:12px;line-height:1.5}
+  .stg .tx b{font-size:14px;color:var(--accent)}
+  .res{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:8px}
+  .res .ang{font-weight:700;color:var(--accent);min-width:60px;font-size:15px}
+  .res .d{flex:1;font-size:12px;line-height:1.4}
   #tabs{display:flex;gap:4px;flex:1}
   #tabs button{flex:1;padding:9px 4px;background:#1c2029}
   #tabs button.on{background:var(--accent);color:#1a1a1a}
@@ -90,6 +104,7 @@
   <canvas id="cv"></canvas>
   <div id="hint"></div>
   <div id="stageLabel"></div>
+  <div id="courseCard"></div>
   <div id="fieldBar"><button id="resetField">↺ 初期位置</button><button id="fieldDone" class="on">完了</button></div>
 </div>
 <div id="panel">
@@ -105,7 +120,8 @@
     <button class="next" data-go="place">次へ ▶</button>
   </div>
   <div class="stepRow" id="row-place">
-    <div class="seg"><button id="shCircle" class="on">● 敵</button><button id="shRect">■ ブロック</button></div>
+    <div class="seg"><button id="shCircle" class="on">●敵</button><button id="shRect">■壁</button><button id="shMine">✱地雷</button></div>
+    <button id="eBook" title="選んだ敵を「最後に殴る相手（本・ボス）」にする">★</button>
     <button id="szMinus" title="敵を小さく">−</button><button id="szPlus" title="敵を大きく">＋</button>
     <button id="eDel">削除</button>
     <span class="grow"></span>
@@ -129,12 +145,14 @@
     <b id="bv" style="min-width:22px;text-align:center;font-size:15px">5</b>
     <button id="bPlus">＋</button>
     <span class="grow"></span>
+    <button id="mSearch">探す</button>
     <button id="mArrow">矢印</button>
     <button id="mFinger">指</button>
     <button id="pin">固定</button>
   </div>
   <div id="pad">パッド</div>
   <div id="menu">
+    <button id="courseBtn">📚 コース</button>
     <button id="stages">📁 ステージ保存・読み込み</button>
     <button id="dim">画面：通常</button>
     <button id="detect">敵・ブロックを自動検出</button>
@@ -153,7 +171,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.24';
+  const VERSION = '2.25';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -184,6 +202,7 @@
   // Block = one cell of the 8-column grid (1170/8 = 146.25px), measured from gameplay video.
   // Minion hitbox: measured radius ≈73px on 2 different enemies (of 1170); centre ≈93–114px above its HP bar.
   const MINION_R = 73;
+  const MINE_R = 32;   // mine pickup radius (approx., image px of 1170)
   const BLOCK = 1 / 8;            // cell width / stack pitch (146.25px of 1170)
   const BLOCK_H = 169 / 1170;     // hitbox height: sprite top-8 .. sprite bottom+5 (measured)
   const blockImg = new Image(); blockImg.src = 'block.png'; blockImg.onload = () => draw();
@@ -447,6 +466,7 @@
     ball: {x: IW * .5, y: IH * .64},
     r: 55,   // ball radius (blocks/enemies). Walls: center stops at x=55..1115 of 1170 = screen edge minus this radius
     enemies: [],
+    mines: [],
     blocks: [],
     wobble: 0.5,
     pierce: false,
@@ -465,7 +485,8 @@
     field: {l: S.field.l / IW, t: S.field.t / IH, r: S.field.r / IW, b: S.field.b / IH},
     ball: {x: S.ball.x / IW, y: S.ball.y / IH},
     r: S.r / IW, angle: S.angle, bounces: S.bounces, pointAim: S.pointAim, showWidth: S.showWidth, pierce: S.pierce, antiBlock: S.antiBlock, dim: S.dim,
-    enemies: S.enemies.map(e => ({x: e.x / IW, y: e.y / IH, R: e.R / IW, g: e.g, ax: e.ax == null ? null : e.ax / IW, ay: e.ay == null ? null : e.ay / IH})),
+    mines: S.mines.map(m => ({x: m.x / IW, y: m.y / IH})),
+    enemies: S.enemies.map(e => ({x: e.x / IW, y: e.y / IH, R: e.R / IW, g: e.g, role: e.role, ax: e.ax == null ? null : e.ax / IW, ay: e.ay == null ? null : e.ay / IH})),
     blocks: S.blocks.map(b => ({l: b.l / IW, r: b.r / IW, t: b.t / IH, b: b.b / IH, hard: !!b.hard})), wobble: S.wobble
   });
   const fromRatio = R => {
@@ -475,7 +496,8 @@
     ['angle', 'bounces', 'pointAim', 'showWidth', 'pierce', 'antiBlock', 'dim'].forEach(k => { if (k in R) S[k] = R[k]; });
     if ('wobble' in R) S.wobble = R.wobble;
     if (Array.isArray(R.blocks)) S.blocks = R.blocks.map(b => ({l: b.l * IW, r: b.r * IW, t: b.t * IH, b: b.b * IH, hard: !!b.hard}));
-    if (Array.isArray(R.enemies)) S.enemies = R.enemies.map(e => ({x: e.x * IW, y: e.y * IH, R: e.R * IW, g: e.g, ax: e.ax == null ? null : e.ax * IW, ay: e.ay == null ? null : e.ay * IH}));
+    if (Array.isArray(R.mines)) S.mines = R.mines.map(m => ({x: m.x * IW, y: m.y * IH}));
+    if (Array.isArray(R.enemies)) S.enemies = R.enemies.map(e => ({x: e.x * IW, y: e.y * IH, R: e.R * IW, g: e.g, role: e.role, ax: e.ax == null ? null : e.ax * IW, ay: e.ay == null ? null : e.ay * IH}));
   };
   try {
     let saved = JSON.parse(localStorage.getItem('monst-guide-v3') || 'null');
@@ -561,7 +583,8 @@
   function trace(bx, by, angDeg, pad, n) {
     const f = S.field;
     const xmin = f.l + pad, xmax = f.r - pad, ymin = f.t + pad, ymax = f.b - pad;
-    const pts = [[bx, by]]; pts.hits = new Set(); pts.kinds = []; pts.sig = [];
+    const pts = [[bx, by]]; pts.hits = new Set(); pts.kinds = []; pts.sig = []; pts.ev = [];
+    const gotM = new Set(), MR = MINE_R * IW / 1170 + S.r;
     if (xmin >= xmax || ymin >= ymax) return pts;
     let x = bx, y = by;
     const a = angDeg * Math.PI / 180;
@@ -604,6 +627,18 @@
       if (!isFinite(t)) break;
       const x0 = x, y0 = y;
       x += dx * t; y += dy * t;
+      {   // pass-through events on this segment, in path order
+        const seg = [], sx = x - x0, sy = y - y0, L = Math.hypot(sx, sy) || 1, ux = sx / L, uy = sy / L;
+        S.mines.forEach((m, k) => {
+          if (gotM.has(k)) return;
+          const fx = m.x - x0, fy = m.y - y0, along = fx * ux + fy * uy, perp = Math.abs(fx * uy - fy * ux);
+          if (perp > MR) return;
+          const enter = along - Math.sqrt(MR * MR - perp * perp);
+          if (enter <= L && along + MR >= 0) seg.push([Math.max(0, enter), 'm', k]);
+        });
+        if (S.pierce) E.forEach((e, k) => { const h = rayEnemy(x0, y0, ux, uy, e, rb); if (h && h.t <= L) seg.push([h.t, 'e', k]); });
+        seg.sort((p, q) => p[0] - q[0]).forEach(([, ty, k]) => { if (ty === 'm') gotM.add(k); pts.ev.push([ty, k, i]); });
+      }
       if (S.pierce) E.forEach((e, k) => {               // pass-through: mark every enemy the segment touches
         const sx = x - x0, sy = y - y0, L2 = sx * sx + sy * sy || 1;
         const u = Math.max(0, Math.min(1, ((e.x - x0) * sx + (e.y - y0) * sy) / L2));
@@ -614,15 +649,17 @@
       if (hitB >= 0) {
         if (flipX) dx = -dx;
         if (flipY) dy = -dy;
+        pts.ev.push(['b', hitB, i]);
         pts.kinds.push('b'); pts.sig.push('b' + hitB + (flipX ? 'x' : '') + (flipY ? 'y' : ''));
       } else if (hitE >= 0) {
         if (hitN.fx) dx = -dx;
-        if (hitN.fy) dy = -dy; pts.hits.add(hitE); pts.kinds.push('e');
+        if (hitN.fy) dy = -dy; pts.hits.add(hitE); pts.kinds.push('e'); pts.ev.push(['e', hitE, i]);
         pts.sig.push('e' + hitE + (hitN.fx ? 'x' : '') + (hitN.fy ? 'y' : ''));
       } else {
         const eps = 1e-6, fx = tx <= t + eps, fy = ty <= t + eps;
         if (fx) dx = -dx;
         if (fy) dy = -dy;
+        if (fx) pts.ev.push(['w', dx > 0 ? 'L' : 'R', i]); if (fy) pts.ev.push(['w', dy > 0 ? 'T' : 'B', i]);
         pts.kinds.push('w'); pts.sig.push('w' + (fx ? (dx > 0 ? 'L' : 'R') : '') + (fy ? (dy > 0 ? 'T' : 'B') : ''));
       }
       if (S.pierce) pts.sig.push('h' + [...pts.hits].sort().join(','));
@@ -736,6 +773,7 @@
     // current
     const pts = trace(S.ball.x, S.ball.y, S.angle, wallPad(), S.bounces);
     drawBlocks();
+    drawMines(showLines ? pts.ev : []);
     drawEnemies(showLines ? pts.hits : new Set());
     if (showLines) {
       if (S.wobble > 0) [-S.wobble, S.wobble].forEach(w => drawWobble(trace(S.ball.x, S.ball.y, S.angle + w, wallPad(), S.bounces)));
@@ -783,7 +821,7 @@
   // ---- stability: how far can the angle drift before the route (what it hits, in order) changes? ----
   const STAB_STEP = 0.02, STAB_MAX = 3;
   let stabCache = '';
-  function routeSig(ang) { return trace(S.ball.x, S.ball.y, ang, wallPad(), S.bounces).sig.join('|'); }
+  function routeSig(ang) { return trace(S.ball.x, S.ball.y, ang, wallPad(), S.bounces).ev.map(q => q[0] + q[1]).join('|'); }   // same things touched in the same order
   function stabRange() {
     const ref = routeSig(S.angle); let lo = 0, hi = 0;
     while (lo < STAB_MAX && routeSig(S.angle - lo - STAB_STEP) === ref) lo += STAB_STEP;
@@ -792,7 +830,7 @@
   }
   let lastStab = null;
   function updateStability() {
-    const key = [S.angle, S.ball.x, S.ball.y, S.bounces, S.pierce, S.antiBlock, JSON.stringify(S.enemies), JSON.stringify(S.blocks), S.r].join(';');
+    const key = [S.angle, S.ball.x, S.ball.y, S.bounces, S.pierce, S.antiBlock, JSON.stringify(S.enemies), JSON.stringify(S.blocks), JSON.stringify(S.mines), S.r].join(';');
     if (key !== stabCache) { stabCache = key; lastStab = stabRange(); }
     const {lo, hi} = lastStab, m = Math.min(lo, hi), el = $('stab');
     el.style.display = '';
@@ -1059,6 +1097,19 @@
     ctx.restore();
   }
 
+  function drawMines(ev) {
+    const got = new Set(ev.filter(q => q[0] === 'm').map(q => q[1]));
+    ctx.save();
+    S.mines.forEach((m, k) => {
+      const [x, y] = toS(m.x, m.y), R = MINE_R * IW / 1170 * scale, sel = mode === 'place' && k === selMine;
+      ctx.beginPath();
+      for (let i = 0; i < 16; i++) { const a = i * Math.PI / 8, r = i % 2 ? R * .55 : R; ctx[i ? 'lineTo' : 'moveTo'](x + Math.cos(a) * r, y + Math.sin(a) * r); }
+      ctx.closePath();
+      ctx.fillStyle = got.has(k) ? 'rgba(61,220,132,.75)' : 'rgba(61,220,132,.25)'; ctx.fill();
+      ctx.lineWidth = sel ? 3 : 1.5; ctx.strokeStyle = '#3ddc84'; ctx.stroke();
+    });
+    ctx.restore();
+  }
   function drawEnemies(hits) {
     ctx.save();
     S.enemies.forEach((e, k) => {
@@ -1068,6 +1119,10 @@
       ctx.setLineDash(sel ? [6, 4] : []);
       ctx.lineWidth = hit || sel ? 3 : 2; ctx.strokeStyle = hit ? '#ff4d88' : 'rgba(255,120,160,.85)'; ctx.stroke();
       ctx.setLineDash([]);
+      if (e.role === 'book') {
+        ctx.fillStyle = '#ffd43b'; ctx.font = `bold ${Math.max(14, R * .5)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('★', x, y);
+      }
       if (mode === 'place') {
         ctx.fillStyle = '#ff4d88';
         ctx.beginPath(); ctx.arc(x + R, y, 7, 0, Math.PI * 2); ctx.fill();   // resize handle
@@ -1101,7 +1156,7 @@
     S.angle = Math.atan2(dy, dx) * 180 / Math.PI;
   }
 
-  let selEnemy = -1, selBlock = -1, lastEnemyR = MINION_R / 1170 * IW, editShape = 'circle';
+  let selMine = -1, selEnemy = -1, selBlock = -1, lastEnemyR = MINION_R / 1170 * IW, editShape = 'circle';
   const $ = id => document.getElementById(id);
 
   cv.addEventListener('pointerdown', e => {
@@ -1126,6 +1181,19 @@
       dragInfo = {kind: 'ballRel', sx, sy, lx: sx, ly: sy, sx0: sx, sy0: sy, t0: performance.now()}; draw(); return;
     }
     if (mode === 'place') {
+      // mines: tap one to select/drag; with the mine tool, tap empty to place
+      for (let i = S.mines.length - 1; i >= 0; i--) {
+        const [mx, my] = toS(S.mines[i].x, S.mines[i].y);
+        if (Math.hypot(sx - mx, sy - my) < Math.max(18, MINE_R * IW / 1170 * scale)) {
+          selMine = i; selEnemy = selBlock = -1;
+          dragInfo = {kind: 'mine', k: i, off: [S.mines[i].x - ix, S.mines[i].y - iy], sx, sy}; syncUI(); draw(); return;
+        }
+      }
+      selMine = -1;
+      if (editShape === 'mine') {
+        S.mines.push({x: ix, y: iy}); selMine = S.mines.length - 1; selEnemy = selBlock = -1;
+        dragInfo = {kind: 'mine', k: selMine, off: [0, 0], sx, sy}; persist(); syncUI(); draw(); return;
+      }
       // "+" next to the selected block
       if (selBlock >= 0 && S.blocks[selBlock]) {
         const B = S.blocks[selBlock];
@@ -1197,7 +1265,8 @@
     dragInfo.sx = sx; dragInfo.sy = sy;
     const [ix, iy] = toI(sx, sy);
     const k = dragInfo.kind;
-    if (k === 'fA') {   // move A (B follows, keeping the angle); relative so the finger doesn't hide it
+    if (k === 'mine') { S.mines[dragInfo.k].x = ix + dragInfo.off[0]; S.mines[dragInfo.k].y = iy + dragInfo.off[1]; }
+    else if (k === 'fA') {   // move A (B follows, keeping the angle); relative so the finger doesn't hide it
       FA = [FA[0] + (sx - dragInfo.lx) / scale, FA[1] + (sy - dragInfo.ly) / scale]; dragInfo.lx = sx; dragInfo.ly = sy;
       fingerInit();
     } else if (k === 'fB') {   // slide B along the line
@@ -1310,7 +1379,7 @@
     if (m !== 'ball') ballZoom = null;
     mode = m;
     try { if (m === 'ball' || m === 'place' || m === 'aim') localStorage.setItem('monst-step', m); } catch (e) {}
-    if (m !== 'place') { selEnemy = -1; selBlock = -1; }
+    if (m !== 'place') { selEnemy = -1; selBlock = -1; selMine = -1; }
     const step = (m === 'arrow' || m === 'finger') ? 'aim' : m;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.step === step));
     $('row-ball').classList.toggle('show', step === 'ball');
@@ -1325,6 +1394,7 @@
     pad.textContent = {ball: 'パッド：玉を少しずつ動かす', place: 'パッド：選んだ敵・ブロックを少しずつ動かす',
                        aim: 'パッド：左右で角度を微調整', arrow: 'パッド：矢印の先を動かす', finger: 'パッド：置く点を少しずつ動かす', field: ''}[m];
     hint.style.display = ''; hint.textContent = HINTS[m] || '';
+    if (typeof showCourseCard === 'function') setTimeout(showCourseCard, 0);
     syncUI(); syncZoom(); layout();
   }
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setMode(b.dataset.step));
@@ -1335,15 +1405,18 @@
   $('mFinger').onclick = () => setMode(mode === 'finger' ? 'aim' : 'finger');
   $('mArrow').onclick = () => setMode(mode === 'arrow' ? 'aim' : 'arrow');
   $('eDel').onclick = () => {
-    if (selEnemy >= 0) S.enemies.splice(selEnemy, 1);
+    if (selMine >= 0) S.mines.splice(selMine, 1);
+    else if (selEnemy >= 0) S.enemies.splice(selEnemy, 1);
     else if (selBlock >= 0) S.blocks.splice(selBlock, 1);
-    selEnemy = selBlock = -1; persist(); syncUI(); draw();
+    selMine = selEnemy = selBlock = -1; persist(); syncUI(); draw();
   };
-  $('eClear').onclick = () => { S.enemies = []; S.blocks = []; selEnemy = selBlock = -1; closeMenu(); persist(); syncUI(); draw(); };
+  $('eClear').onclick = () => { S.enemies = []; S.blocks = []; S.mines = []; selEnemy = selBlock = -1; closeMenu(); persist(); syncUI(); draw(); };
   const resizeSel = f => { if (selEnemy >= 0) { const en = S.enemies[selEnemy]; en.R = Math.max(15, en.R + f * IW / 1170); lastEnemyR = en.R; syncGroup(selEnemy); persist(); draw(); } };
   $('szMinus').onclick = () => resizeSel(-3);
   $('szPlus').onclick = () => resizeSel(3);
-  const setShape = sh => { editShape = sh; $('shCircle').classList.toggle('on', sh === 'circle'); $('shRect').classList.toggle('on', sh === 'rect'); };
+  const setShape = sh => { editShape = sh; $('shCircle').classList.toggle('on', sh === 'circle'); $('shRect').classList.toggle('on', sh === 'rect'); $('shMine').classList.toggle('on', sh === 'mine'); };
+  $('shMine').onclick = () => setShape('mine');
+  $('eBook').onclick = () => { if (selEnemy < 0) { toast('先に敵を選んでください', 1800); return; } const e = S.enemies[selEnemy]; e.role = e.role === 'book' ? undefined : 'book'; persist(); syncUI(); draw(); };
   $('shCircle').onclick = () => setShape('circle');
   $('shRect').onclick = () => setShape('rect');
   $('wobble').onclick = () => { S.wobble = S.wobble === 0 ? 0.5 : S.wobble === 0.5 ? 1 : 0; syncUI(); persist(); draw(); };
@@ -1370,8 +1443,9 @@
     $('dim').textContent = S.dim ? '画面：暗め' : '画面：通常';
     $('dim').classList.toggle('on', S.dim);
     $('szMinus').disabled = $('szPlus').disabled = selEnemy < 0;
+    $('eBook').classList.toggle('on', selEnemy >= 0 && S.enemies[selEnemy] && S.enemies[selEnemy].role === 'book');
     $('szMinus').style.opacity = $('szPlus').style.opacity = selEnemy < 0 ? .4 : 1;
-    $('eDel').style.opacity = (selEnemy < 0 && selBlock < 0) ? .4 : 1;
+    $('eDel').style.opacity = (selEnemy < 0 && selBlock < 0 && selMine < 0) ? .4 : 1;
     const lab = $('stageLabel'); lab.style.display = cur ? '' : 'none';
     if (cur) lab.textContent = `${cur.q} / ステージ${cur.s + 1}`;
   };
@@ -1438,7 +1512,7 @@
       S.pins = []; tipD = null;
       const after = reset => {
         closeSheet();
-        if (reset) { S.enemies = []; S.blocks = []; cur = null; setTimeout(() => runDetect(true), 30); }
+        if (reset) { S.enemies = []; S.blocks = []; S.mines = []; cur = null; setTimeout(() => runDetect(true), 30); }
         selEnemy = selBlock = -1; persist(); setMode('ball');
       };
       if (S.enemies.length || S.blocks.length) {
@@ -1461,9 +1535,9 @@
   let cur = null;   // {q: quest name, s: stage index} of the loaded stage
   const loadLib = () => { try { return JSON.parse(localStorage.getItem(LIB_KEY) || '[]'); } catch (e) { return []; } };
   const saveLib = L => { try { localStorage.setItem(LIB_KEY, JSON.stringify(L)); return true; } catch (e) { toast('保存できませんでした'); return false; } };
-  const snapshot = () => { const R = toRatio(); return {field: R.field, blocks: R.blocks, enemies: R.enemies, savedAt: Date.now()}; };
+  const snapshot = () => { const R = toRatio(); return {field: R.field, blocks: R.blocks, enemies: R.enemies, mines: R.mines, savedAt: Date.now()}; };
   function applyStage(st) {
-    fromRatio({field: st.field, blocks: st.blocks || [], enemies: st.enemies || []});
+    fromRatio({field: st.field, blocks: st.blocks || [], enemies: st.enemies || [], mines: st.mines || []});
     selEnemy = selBlock = -1; S.pins = []; persist();
   }
   function stageSheet() {
@@ -1542,6 +1616,109 @@
     });
   }
   $('stages').onclick = () => { closeMenu(); stageSheet(); };
+
+  // ======== courses: per-stage notes + goal used by the route search ========
+  // goal: mines = mines to pick before hitting ★, walls = distinct walls to touch before ★ (hit-charge wall),
+  //       link = prefer touching many enemies before ★ (damage link)
+  const COURSES = [{
+    id: 'philo', name: '滅絶 フィロソフィア', src: 'ルート集動画（ゆっくり実況）より',
+    common: ['ダメージリンク：触れた敵どうしでダメージを共有（触れた数で等分）', '最後に地雷を持って本（★）を殴る。何体目で殴るかでダメージが大きく変わる', 'ゾンビは1ターンに2体までしか蘇生しない（3体以上同時に倒せばループを抜けられる）'],
+    stages: [
+      {n: 'ステ1', img: 'philo1', goal: {mines: 1, link: true},
+       pts: ['1手目は縦カン', '2手目はリズムで固定打ち：初期位置が低い→ゲージの丸の右端／高い→右端から少し内側', 'ゾンビ2体を同時処理', '即死は「6」の敵。猶予は長いので雑魚1体残してSS溜めもあり']},
+      {n: 'ステ2', img: 'philo2', goal: {mines: 2, link: true},
+       pts: ['本が内部弱点。地雷を2個持って本を殴らないと倒せない', '倒す必要があるのはゾンビと土偶だけ（角の玉は不要）']},
+      {n: 'ステ3', img: 'philo3', goal: {mines: 2, link: true},
+       pts: ['弱点持ちの雑魚3体を同時処理。地雷2個以上で弱点を殴る', 'HPが残っている1体だけに1体目で地雷持ち弱点殴りを決めてHPをそろえる', 'そろったら3体に触れて、3体目に地雷持ち弱点殴り']},
+      {n: 'ステ4 ボス1', img: 'philo4', goal: {mines: 1, walls: 4, link: true},
+       pts: ['まず玉の処理（本とリンクして本を地雷殴り／ボスとリンクしてボスに友情）', 'ボスに触れる→ヒットチャージウォール4面→最後に本を地雷殴り', '左上の本が蘇生：ボスの右側・下・拡大ルート／右下の本：左側・上・拡大ルート', '4面が無理なら3面触れ殴り']},
+      {n: 'ステ5', img: 'philo5', goal: {mines: 2, link: true}, pts: ['ステ2と同じ考え方（地雷を拾ってから本）']},
+      {n: 'ステ6 ボス2', img: 'philo6', goal: {mines: 1, walls: 4, link: true},
+       pts: ['ボス削りはステ4と同じ考え方', '下の本で4面：ボスの左側か上を通る／上の本で4面：右側か下を通る', '実演：左抜け・上抜け・角戻り・縮小']},
+      {n: 'ステ7', img: 'philo7', goal: {mines: 2, link: true}, pts: ['地雷を拾ってから同時処理（解説少なめ・推定）']},
+      {n: 'ラスゲ', img: 'philo8', goal: {mines: 1, walls: 4, link: true},
+       pts: ['フェンリル3体の同時処理。ウォールのせいで弱点外殴りでも大きく削れる → 1体だけだとワンパン注意', 'ボス削りは玉処理から。ボスに触れてから4面（下の壁はボス内部で拾う）', '締めはSSで拡大ルート']}
+    ]}];
+  let curCourse = null;   // {c, s}
+  try { const v = JSON.parse(localStorage.getItem('monst-course') || 'null'); if (v) curCourse = v; } catch (e) {}
+  const courseStage = () => { if (!curCourse) return null; const c = COURSES.find(x => x.id === curCourse.c); return c && c.stages[curCourse.s] ? {c, st: c.stages[curCourse.s]} : null; };
+  function showCourseCard() {
+    const cs = courseStage(), el = $('courseCard');
+    if (!cs || mode === 'ball' || mode === 'field' || mode === 'finger' || mode === 'arrow') { el.classList.remove('show'); return; }
+    const g = cs.st.goal, need = [g.mines ? `地雷${g.mines}個` : '', g.walls ? `壁${g.walls}面` : '', g.link ? 'なるべく多くの敵' : ''].filter(Boolean).join('・');
+    el.innerHTML = `<div class="cc-h"><span>${esc(cs.c.name)} ${esc(cs.st.n)}</span><button id="ccHide">✕</button></div>` +
+      cs.st.pts.map(t => '・' + esc(t)).join('<br>') + `<br><b>探すの目標：${need} → ★を殴る</b>`;
+    el.classList.add('show');
+    $('ccHide').onclick = () => el.classList.remove('show');
+  }
+  function courseSheet() {
+    let html = '<h3>📚 コース</h3>';
+    COURSES.forEach(c => {
+      html += `<div class="small">${esc(c.name)}（${esc(c.src)}）</div><div class="small">${c.common.map(t => '・' + esc(t)).join('<br>')}</div>`;
+      c.stages.forEach((st, si) => {
+        const on = curCourse && curCourse.c === c.id && curCourse.s === si;
+        html += `<div class="stg"><img src="course/${st.img}.jpg" alt=""><div class="tx"><b>${esc(st.n)}</b>${on ? '（選択中）' : ''}<br>${st.pts.map(t => '・' + esc(t)).join('<br>')}
+          <div style="margin-top:6px"><button data-cs="${c.id},${si}" class="${on ? 'on' : ''}">このステージで使う</button></div></div></div>`;
+      });
+    });
+    html += `<button id="ccOff">コースを使わない</button><button id="closeS">閉じる</button>
+      <div class="small">ステージ画像は参考用の小さい画像です。打つ前は実際のスクショを読み込んで、地雷（✱）と本・ボス（★）を「② 配置」で置いてください。</div>`;
+    openSheet(html, sh => {
+      sh.querySelectorAll('[data-cs]').forEach(b => b.onclick = () => {
+        const [c, si] = b.dataset.cs.split(','); curCourse = {c, s: +si};
+        try { localStorage.setItem('monst-course', JSON.stringify(curCourse)); } catch (e) {}
+        closeSheet(); showCourseCard(); toast(`${COURSES.find(x => x.id === c).stages[+si].n} を選びました`, 2000);
+      });
+      sh.querySelector('#ccOff').onclick = () => { curCourse = null; try { localStorage.removeItem('monst-course'); } catch (e) {} closeSheet(); showCourseCard(); };
+      sh.querySelector('#closeS').onclick = closeSheet;
+    });
+  }
+  $('courseBtn').onclick = () => { closeMenu(); courseSheet(); };
+
+  // ======== route search: scan every angle, score by the goal ========
+  function scoreRoute(ev, goal) {
+    const bi = ev.findIndex(q => q[0] === 'e' && S.enemies[q[1]] && S.enemies[q[1]].role === 'book');
+    if (bi < 0) return null;
+    const before = ev.slice(0, bi);
+    const mines = new Set(before.filter(q => q[0] === 'm').map(q => q[1])).size;
+    const walls = new Set(before.filter(q => q[0] === 'w').map(q => q[1])).size;
+    const link = new Set(before.filter(q => q[0] === 'e' && q[1] !== ev[bi][1]).map(q => q[1])).size;
+    const okM = mines >= (goal.mines || 0), okW = walls >= (goal.walls || 0);
+    return {bi, seg: ev[bi][2], mines, walls, link, ok: okM && okW, score: (okM ? 1e5 : 0) + (okW ? 1e5 : 0) + Math.min(mines, 4) * 300 + walls * 200 + (goal.link ? link * 1000 : 0) - bi};
+  }
+  function searchRoutes() {
+    const books = S.enemies.filter(e => e.role === 'book').length;
+    if (!books) { toast('「② 配置」で本・ボスを選んで★を付けてください', 3000); return; }
+    const cs = courseStage(), goal = cs ? cs.st.goal : {mines: S.mines.length ? 1 : 0, link: true};
+    const N = Math.max(S.bounces, 8), res = [];
+    for (let a = -180; a < 180; a += 0.25) {
+      const p = trace(S.ball.x, S.ball.y, a, wallPad(), N), sc = scoreRoute(p.ev, goal);
+      if (sc) {
+        const nb = sc.seg + 1;
+        res.push({a, ...sc, nb, sig: JSON.stringify(p.ev.slice(0, sc.bi + 1).map(q => q.slice(0, 2)))});
+      }
+    }
+    // merge neighbouring angles that give the same route; keep the middle angle and the width
+    res.sort((p, q) => p.a - q.a);
+    const groups = [];
+    res.forEach(r => { const g = groups[groups.length - 1]; if (g && g.sig === r.sig && Math.abs(r.a - g.a1) < .3) { g.a1 = r.a; g.n++; } else groups.push({...r, a0: r.a, a1: r.a, n: 1}); });
+    groups.forEach(g => { g.mid = (g.a0 + g.a1) / 2; g.width = g.a1 - g.a0 + .25; g.score += Math.min(g.width, 3) * 80; });
+    groups.sort((p, q) => q.score - p.score);
+    const top = groups.slice(0, 8);
+    const disp = a => { let d = a + 90; d = ((d + 180) % 360 + 360) % 360 - 180; return d.toFixed(1); };
+    let html = `<h3>🔍 ルート候補</h3><div class="small">目標：${goal.mines ? `地雷${goal.mines}個 ` : ''}${goal.walls ? `壁${goal.walls}面 ` : ''}→ ★を殴る。幅＝ずれても同じルートになる角度の幅</div>`;
+    if (!top.length) html += '<div class="small">★に届くルートが見つかりませんでした。反射の回数を増やすか、配置を確認してください。</div>';
+    top.forEach((g, i) => {
+      const w = g.width, lvl = w < .3 ? '🔴' : w < 1 ? '🟠' : '🟢';
+      html += `<div class="res"><span class="ang">${disp(g.mid)}°</span><span class="d">${g.ok ? '✅ 目標達成' : '△ 目標未達'}　地雷${g.mines}・壁${g.walls}面・リンク${g.link}体<br>${lvl} 幅 ${w.toFixed(2)}°</span><button data-ang="${g.mid}" data-nb="${g.nb}">使う</button></div>`;
+    });
+    html += '<button id="closeS">閉じる</button>';
+    openSheet(html, sh => {
+      sh.querySelectorAll('[data-ang]').forEach(b => b.onclick = () => { S.angle = +b.dataset.ang; S.bounces = Math.max(1, Math.min(20, +b.dataset.nb - 1)); persist(); closeSheet(); setMode('aim'); });
+      sh.querySelector('#closeS').onclick = closeSheet;
+    });
+  }
+  $('mSearch').onclick = searchRoutes;
 
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
