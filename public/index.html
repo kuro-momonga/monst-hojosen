@@ -66,7 +66,7 @@
   #courseCard .cc-h span{flex:1;font-weight:700}
   #courseCard button{padding:5px 8px;font-size:12px}
   .stg{display:flex;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px;align-items:flex-start}
-  .stg img{width:96px;border-radius:6px;flex:none}
+  .stg img{width:132px;border-radius:6px;flex:none}
   .stg .tx{flex:1;font-size:12px;line-height:1.5}
   .stg .tx b{font-size:14px;color:var(--accent)}
   .res{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:8px}
@@ -145,6 +145,7 @@
     <b id="bv" style="min-width:22px;text-align:center;font-size:15px">5</b>
     <button id="bPlus">＋</button>
     <span class="grow"></span>
+    <button id="mRoute">ルート</button>
     <button id="mSearch">探す</button>
     <button id="mArrow">矢印</button>
     <button id="mFinger">指</button>
@@ -171,7 +172,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.26';
+  const VERSION = '2.27';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1639,6 +1640,8 @@
       {n: 'ラスゲ', img: 'philo8', goal: {mines: 1, walls: 4, link: true},
        pts: ['フェンリル3体の同時処理。ウォールのせいで弱点外殴りでも大きく削れる → 1体だけだとワンパン注意', 'ボス削りは玉処理から。ボスに触れてから4面（下の壁はボス内部で拾う）', '締めはSSで拡大ルート']}
     ]}];
+  // routes measured from the route-collection video: stage index, video time (s), start (field ratio), angle (deg, 0=right, cw+)
+  const ROUTES = {philo: [{"id":"p556","s":3,"t":556,"x":0.144,"y":0.894,"a":-63.6},{"id":"p565","s":3,"t":565,"x":1,"y":0.305,"a":119.5},{"id":"p571","s":3,"t":571,"x":0.961,"y":0.905,"a":-122.4},{"id":"p580","s":3,"t":580,"x":0.981,"y":0.672,"a":-118.7},{"id":"p588","s":3,"t":588,"x":0,"y":0.859,"a":-66.6},{"id":"p595","s":3,"t":595,"x":0.65,"y":0.115,"a":122.8},{"id":"p603","s":3,"t":603,"x":0.882,"y":0.468,"a":146.2},{"id":"p611","s":4,"t":611,"x":0.944,"y":0.079,"a":-173.2},{"id":"p617","s":4,"t":617,"x":0.927,"y":0.851,"a":170.4},{"id":"p624","s":4,"t":624,"x":0,"y":0.909,"a":-78.8},{"id":"p632","s":4,"t":632,"x":0.779,"y":0.043,"a":68.6},{"id":"p640","s":4,"t":640,"x":0.605,"y":0.956,"a":-136.9},{"id":"p647","s":4,"t":647,"x":0.066,"y":0.339,"a":40.3},{"id":"p654","s":4,"t":654,"x":0.937,"y":0.543,"a":154.4},{"id":"p664","s":5,"t":664,"x":0.645,"y":0.942,"a":-76.5},{"id":"p672","s":5,"t":672,"x":0.439,"y":0.1,"a":97.2},{"id":"p682","s":5,"t":682,"x":0.274,"y":0.995,"a":-30.4},{"id":"p690","s":5,"t":690,"x":0.039,"y":0.918,"a":-19.8},{"id":"p700","s":5,"t":700,"x":0.032,"y":0.734,"a":-42.4},{"id":"p709","s":5,"t":709,"x":0.547,"y":0.09,"a":119.5},{"id":"p716","s":5,"t":716,"x":0.958,"y":0.428,"a":-158.2},{"id":"p731","s":5,"t":731,"x":0.902,"y":0.305,"a":177.6},{"id":"p738","s":5,"t":738,"x":0.963,"y":0.288,"a":137.1},{"id":"p748","s":5,"t":748,"x":0.366,"y":0.961,"a":-34.1},{"id":"p756","s":5,"t":756,"x":0.96,"y":0.554,"a":-142.5},{"id":"p765","s":5,"t":765,"x":0.742,"y":0.097,"a":126.0},{"id":"p775","s":5,"t":775,"x":0.415,"y":0.932,"a":-121.3},{"id":"p783","s":5,"t":783,"x":0.489,"y":0.15,"a":56.6},{"id":"p791","s":5,"t":791,"x":0.687,"y":0.064,"a":143.9},{"id":"p799","s":5,"t":799,"x":0.632,"y":0.068,"a":124.7},{"id":"p807","s":5,"t":807,"x":0,"y":0.844,"a":-57.7},{"id":"p818","s":5,"t":818,"x":0.965,"y":0.643,"a":-156.6},{"id":"p828","s":5,"t":828,"x":0.97,"y":0.487,"a":154.7},{"id":"p837","s":5,"t":837,"x":0.166,"y":0.945,"a":-25.1},{"id":"p844","s":5,"t":844,"x":0.014,"y":0.267,"a":50.8},{"id":"p851","s":5,"t":851,"x":0.576,"y":0.96,"a":-53.2},{"id":"p859","s":5,"t":859,"x":0.012,"y":0.82,"a":-50.8},{"id":"p866","s":6,"t":866,"x":0.923,"y":0.089,"a":160.7},{"id":"p873","s":6,"t":873,"x":0.062,"y":0.099,"a":9.6},{"id":"p880","s":6,"t":880,"x":0.098,"y":0.192,"a":14.1},{"id":"p898","s":6,"t":898,"x":0.949,"y":0.838,"a":165.6},{"id":"p906","s":6,"t":906,"x":0.219,"y":0.148,"a":102.8},{"id":"p914","s":6,"t":914,"x":0.977,"y":0.915,"a":-132.7},{"id":"p922","s":6,"t":922,"x":1,"y":0.514,"a":-121.9},{"id":"p930","s":6,"t":930,"x":0.918,"y":0.871,"a":-137.8},{"id":"p938","s":6,"t":938,"x":0.589,"y":0.836,"a":-68.4},{"id":"p945","s":6,"t":945,"x":0.93,"y":0.06,"a":113.0},{"id":"p952","s":6,"t":952,"x":0.508,"y":0.885,"a":-109.4},{"id":"p959","s":6,"t":959,"x":0.1,"y":0.287,"a":30.8},{"id":"p968","s":6,"t":968,"x":0.569,"y":0.061,"a":117.4},{"id":"p976","s":6,"t":976,"x":0.17,"y":0.122,"a":57.5},{"id":"p983","s":6,"t":983,"x":0.911,"y":0.076,"a":153.1},{"id":"p990","s":6,"t":990,"x":0.913,"y":0.342,"a":-159.0},{"id":"p997","s":6,"t":997,"x":0.094,"y":0.399,"a":39.0},{"id":"p1006","s":7,"t":1006,"x":0.043,"y":0.794,"a":-42.9},{"id":"p1049","s":7,"t":1049,"x":0.954,"y":0.795,"a":-162.3},{"id":"p1056","s":7,"t":1056,"x":0.072,"y":0.889,"a":-18.0},{"id":"p1064","s":7,"t":1064,"x":0.578,"y":0.074,"a":106.9},{"id":"p1073","s":7,"t":1073,"x":0.099,"y":0.531,"a":-35.4},{"id":"p1082","s":7,"t":1082,"x":0.989,"y":0.937,"a":-114.2},{"id":"p1092","s":7,"t":1092,"x":0.968,"y":0.154,"a":-164.0},{"id":"p1102","s":7,"t":1102,"x":0.715,"y":0.84,"a":-75.7},{"id":"p1111","s":7,"t":1111,"x":0.059,"y":0.89,"a":-17.3},{"id":"p1122","s":7,"t":1122,"x":0.379,"y":0.941,"a":-99.4},{"id":"p1146","s":7,"t":1146,"x":0.031,"y":0.812,"a":-29.1},{"id":"p1153","s":7,"t":1153,"x":0.966,"y":0.675,"a":-148.2},{"id":"p1163","s":7,"t":1163,"x":0.474,"y":0.959,"a":-41.0},{"id":"p1177","s":7,"t":1177,"x":0.62,"y":0.053,"a":130.9},{"id":"p1183","s":7,"t":1183,"x":0.699,"y":0.072,"a":131.4},{"id":"p1194","s":7,"t":1194,"x":0.976,"y":0.805,"a":-134.8},{"id":"p1208","s":7,"t":1208,"x":0.939,"y":0.059,"a":124.5}]};
   let curCourse = null;   // {c, s}
   try { const v = JSON.parse(localStorage.getItem('monst-course') || 'null'); if (v) curCourse = v; } catch (e) {}
   const courseStage = () => { if (!curCourse) return null; const c = COURSES.find(x => x.id === curCourse.c); return c && c.stages[curCourse.s] ? {c, st: c.stages[curCourse.s]} : null; };
@@ -1719,6 +1722,35 @@
     });
   }
   $('mSearch').onclick = searchRoutes;
+
+  // ======== route collection: routes from the video that start near the current ball ========
+  function routeSheet() {
+    const cs = courseStage();
+    if (!cs) { toast('先に ⋯ →「📚 コース」でステージを選んでください', 3000); return; }
+    const f = S.field, bx = (S.ball.x - f.l) / (f.r - f.l), by = (S.ball.y - f.t) / (f.b - f.t);
+    const list = (ROUTES[cs.c.id] || []).filter(r => r.s === curCourse.s)
+      .map(r => ({...r, d: Math.hypot(r.x - bx, (r.y - by) * (f.b - f.t) / (f.r - f.l))})).sort((p, q) => p.d - q.d);
+    const disp = a => { let d = a + 90; d = ((d + 180) % 360 + 360) % 360 - 180; return d.toFixed(1); };
+    const mmss = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    let html = `<h3>📼 ${esc(cs.c.name)} ${esc(cs.st.n)} のルート</h3>
+      <div class="small">ルート集動画で打っていたショットを、今の玉の位置に近い順に並べています。赤丸が打った位置、赤線が打った方向です。</div>`;
+    if (!list.length) html += '<div class="small">このステージのルートはまだ入っていません（動画の前半を読み込むと増えます）。</div>';
+    list.forEach(r => {
+      const near = r.d < .06 ? '🟢 ほぼ同じ位置' : r.d < .14 ? '🟠 近い' : '⚪ 位置が違う';
+      html += `<div class="stg"><img src="course/r/${r.id}.jpg" alt=""><div class="tx"><b>${disp(r.a)}°</b>　${near}<br>動画 ${mmss(r.t)}
+        <div style="margin-top:6px;display:flex;gap:6px"><button data-ra="${r.a}">この角度</button><button data-rp="${r.id}">位置ごと</button></div></div></div>`;
+    });
+    html += '<button id="closeS">閉じる</button><div class="small">角度は動画から測った値で、±1°ほどずれることがあります。最後は線とずれ許容で調整してください。</div>';
+    openSheet(html, sh => {
+      sh.querySelectorAll('[data-ra]').forEach(b => b.onclick = () => { S.angle = +b.dataset.ra; persist(); closeSheet(); setMode('aim'); });
+      sh.querySelectorAll('[data-rp]').forEach(b => b.onclick = () => {
+        const r = list.find(q => q.id === b.dataset.rp);
+        S.ball.x = f.l + r.x * (f.r - f.l); S.ball.y = f.t + r.y * (f.b - f.t); clampBall(); S.angle = r.a; persist(); closeSheet(); setMode('aim');
+      });
+      sh.querySelector('#closeS').onclick = closeSheet;
+    });
+  }
+  $('mRoute').onclick = routeSheet;
 
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
