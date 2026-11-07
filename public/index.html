@@ -65,6 +65,17 @@
   #courseCard .cc-h{display:flex;align-items:center;gap:6px;margin-bottom:4px}
   #courseCard .cc-h span{flex:1;font-weight:700}
   #courseCard button{padding:5px 8px;font-size:12px}
+  #coursePanel{display:none;flex-direction:column;gap:8px}
+  body.course #coursePanel{display:flex}
+  body.course #mainRow, body.course .stepRow, body.course #pad{display:none !important}
+  #cpStages{display:flex;gap:5px;overflow-x:auto;padding-bottom:2px}
+  #cpStages button{flex:none;padding:8px 10px}
+  #cpList{display:flex;flex-direction:column;gap:6px;max-height:26vh;overflow:auto}
+  .cpr{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:7px 9px;background:#1c2029}
+  .cpr.on{border-color:var(--accent);background:#2a2614}
+  .cpr .ang{font-weight:700;color:var(--accent);font-size:17px;min-width:66px}
+  .cpr .d{flex:1;font-size:11px;line-height:1.45;color:var(--muted)}
+  .cpr img{width:46px;border-radius:4px}
   .stg{display:flex;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px;align-items:flex-start}
   .stg img{width:132px;border-radius:6px;flex:none}
   .stg .tx{flex:1;font-size:12px;line-height:1.5}
@@ -108,7 +119,16 @@
   <div id="fieldBar"><button id="resetField">↺ 初期位置</button><button id="fieldDone" class="on">完了</button></div>
 </div>
 <div id="panel">
-  <div class="row" style="flex-wrap:nowrap;gap:5px">
+  <div id="coursePanel">
+    <div class="row" style="flex-wrap:nowrap;gap:6px">
+      <button id="cpExit">✕</button><b id="cpTitle" style="flex:1;font-size:14px"></b>
+      <button id="cpImg">🖼 画像</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button>
+    </div>
+    <div id="cpStages"></div>
+    <div id="cpHint" class="small">キャラの真ん中をタップして玉を置くと、取れるルートが下に出ます</div>
+    <div id="cpList"></div>
+  </div>
+  <div class="row" id="mainRow" style="flex-wrap:nowrap;gap:5px">
     <button id="btnImg">🖼 画像</button>
     <input id="file" type="file" accept="image/*">
     <div id="tabs"><button data-step="ball">① 玉</button><button data-step="place">② 配置</button><button data-step="aim">③ 狙う</button></div>
@@ -145,7 +165,6 @@
     <b id="bv" style="min-width:22px;text-align:center;font-size:15px">5</b>
     <button id="bPlus">＋</button>
     <span class="grow"></span>
-    <button id="mRoute">ルート</button>
     <button id="mSearch">探す</button>
     <button id="mArrow">矢印</button>
     <button id="mFinger">指</button>
@@ -172,7 +191,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.29';
+  const VERSION = '2.30';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -519,7 +538,7 @@
     // aim mode: show only the field (+ small margin); field mode: whole screenshot
     let V;
     if (mode === 'field' || mode === 'finger') V = {x: 0, y: 0, w: IW, h: IH};
-    else if (mode === 'ball' && ballZoom) {   // zoomed view around the ball for precise placement
+    else if ((mode === 'ball' || mode === 'course') && ballZoom) {   // zoomed view around the ball for precise placement
       const zw = 560 * IW / 1170, zh = zw * h / w;
       V = {x: ballZoom[0] - zw / 2, y: ballZoom[1] - zh / 2, w: zw, h: zh};
     }
@@ -768,7 +787,7 @@
     ctx.restore();
 
     // pinned
-    const showLines = mode === 'aim' || mode === 'arrow' || mode === 'finger';   // ① 玉 / ② 配置 では線を出さない
+    const showLines = mode === 'aim' || mode === 'arrow' || mode === 'finger' || (mode === 'course' && cpSel !== null);   // ① 玉 / ② 配置 では線を出さない
     if (showLines) S.pins.forEach(p => drawPinned(trace(p.x, p.y, p.angle, wallPad(), p.bounces)));
 
     // current
@@ -804,7 +823,7 @@
       ctx.restore();
     }
     // ball being moved (after long-press)
-    if ((dragInfo && dragInfo.kind === 'ball') || mode === 'ball') {
+    if ((dragInfo && dragInfo.kind === 'ball') || mode === 'ball' || mode === 'course') {
       ctx.save(); ctx.strokeStyle = '#ffd43b'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(bx, by, Math.max(S.r * scale, 14) + 6, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
     }
@@ -816,7 +835,8 @@
     else if (dragInfo && dragInfo.kind !== 'pull' && dragInfo.kind !== 'pending') drawLoupe(dragInfo.sx, dragInfo.sy);
 
     document.getElementById('angle').textContent = displayAngle() + '°';
-    if (mode === 'aim' || mode === 'arrow' || mode === 'finger') updateStability(); else $('stab').style.display = 'none';
+    if (mode === 'aim' || mode === 'arrow' || mode === 'finger') updateStability();
+    if (mode === 'course') $('stab').style.display = 'none'; else $('stab').style.display = 'none';
   }
 
   // ---- stability: how far can the angle drift before the route (what it hits, in order) changes? ----
@@ -1178,7 +1198,7 @@
       if (tipD == null) tipPoint(trace(S.ball.x, S.ball.y, S.angle, wallPad(), 0));
       dragInfo = {kind: 'tip', sx, sy, sx0: sx, sy0: sy, d0: tipD}; draw(); return;
     }
-    if (mode === 'ball') {   // tap = snap to the turn ring there; drag = move relatively (finger never hides the ball)
+    if (mode === 'ball' || mode === 'course') {   // tap = snap to the turn ring there; drag = move relatively (finger never hides the ball)
       dragInfo = {kind: 'ballRel', sx, sy, lx: sx, ly: sy, sx0: sx, sy0: sy, t0: performance.now()}; draw(); return;
     }
     if (mode === 'place') {
@@ -1319,9 +1339,11 @@
       // the turn ring changes size/colour or is absent: only snap when a clear ring is found
       const r = ballZoom ? null : findRing(ix, iy);
       if (r) { S.ball.x = r.x; S.ball.y = r.y; } else { S.ball.x = ix; S.ball.y = iy; }
+      if (mode === 'course') { cpSel = null; clampBall(); persist(); dragInfo = null; renderCourse(); draw(); return; }
       if (!ballZoom) { ballZoom = [S.ball.x, S.ball.y]; clampBall(); persist(); dragInfo = null; layout(); syncZoom(); return; }
     }
-    dragInfo = null; padFocus = null; clampBall(); persist(); draw(); };
+    const wasBall = dragInfo && dragInfo.kind === 'ballRel';
+    dragInfo = null; padFocus = null; clampBall(); persist(); if (mode === 'course' && wasBall) { cpSel = null; renderCourse(); } draw(); };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
 
@@ -1377,7 +1399,7 @@
     field: '赤枠の辺・角をドラッグで調整',
   };
   function setMode(m) {
-    if (m !== 'ball') ballZoom = null;
+    if (m !== 'ball' && m !== 'course') ballZoom = null;
     mode = m;
     try { if (m === 'ball' || m === 'place' || m === 'aim') localStorage.setItem('monst-step', m); } catch (e) {}
     if (m !== 'place') { selEnemy = -1; selBlock = -1; selMine = -1; }
@@ -1395,6 +1417,7 @@
     pad.textContent = {ball: 'パッド：玉を少しずつ動かす', place: 'パッド：選んだ敵・ブロックを少しずつ動かす',
                        aim: 'パッド：左右で角度を微調整', arrow: 'パッド：矢印の先を動かす', finger: 'パッド：置く点を少しずつ動かす', field: ''}[m];
     hint.style.display = ''; hint.textContent = HINTS[m] || '';
+    if (m === 'course') { hint.style.display = 'none'; renderCourse(); }
     if (typeof showCourseCard === 'function') setTimeout(showCourseCard, 0);
     syncUI(); syncZoom(); layout();
   }
@@ -1494,7 +1517,7 @@
       im.onload = () => {
         const R = toRatio(); img = im; IW = im.naturalWidth; IH = im.naturalHeight; fromRatio(R);
         $('radius').max = Math.round(IW / 6);
-        setMode(savedStep);
+        setMode(courseOn ? 'course' : savedStep);
       };
       im.src = URL.createObjectURL(blob);
     } catch (e) {}
@@ -1511,6 +1534,7 @@
       fromRatio(R);
       $('radius').max = Math.round(IW / 6);
       S.pins = []; tipD = null;
+      if (courseOn) { S.enemies = []; S.blocks = []; S.mines = []; persist(); cpSel = null; setMode('course'); toast('キャラの真ん中をタップして玉を置いてください', 2500); return; }
       const after = reset => {
         closeSheet();
         if (reset) { S.enemies = []; S.blocks = []; S.mines = []; cur = null; setTimeout(() => runDetect(true), 30); }
@@ -1654,28 +1678,58 @@
     el.classList.add('show');
     $('ccHide').onclick = () => el.classList.remove('show');
   }
-  function courseSheet() {
-    let html = '<h3>📚 コース</h3>';
+  function courseSheet() {   // pick a course
+    let html = '<h3>📚 コース</h3><div class="small">コースを選ぶと専用の画面になります。ステージを選んで、手番の玉を置くだけで取れるルートを出します。</div>';
     COURSES.forEach(c => {
-      html += `<div class="small">${esc(c.name)}（${esc(c.src)}）</div><div class="small">${c.common.map(t => '・' + esc(t)).join('<br>')}</div>`;
-      c.stages.forEach((st, si) => {
-        const on = curCourse && curCourse.c === c.id && curCourse.s === si;
-        html += `<div class="stg"><img src="course/${st.img}.jpg" alt=""><div class="tx"><b>${esc(st.n)}</b>${on ? '（選択中）' : ''}<br>${st.pts.map(t => '・' + esc(t)).join('<br>')}
-          <div style="margin-top:6px"><button data-cs="${c.id},${si}" class="${on ? 'on' : ''}">このステージで使う</button></div></div></div>`;
-      });
+      html += `<div class="stg"><img src="course/${c.stages[0].img}.jpg" alt=""><div class="tx"><b>${esc(c.name)}</b><br>${c.stages.length}ステージ・ルート${(ROUTES[c.id] || []).length}本<br><span class="small">${esc(c.src)}</span>
+        <div style="margin-top:6px"><button data-cc="${c.id}" class="on">このコースを始める</button></div></div></div>`;
     });
-    html += `<button id="ccOff">コースを使わない</button><button id="closeS">閉じる</button>
-      <div class="small">ステージ画像は参考用の小さい画像です。打つ前は実際のスクショを読み込んで、地雷（✱）と本・ボス（★）を「② 配置」で置いてください。</div>`;
+    html += '<button id="closeS">閉じる</button>';
     openSheet(html, sh => {
-      sh.querySelectorAll('[data-cs]').forEach(b => b.onclick = () => {
-        const [c, si] = b.dataset.cs.split(','); curCourse = {c, s: +si};
-        try { localStorage.setItem('monst-course', JSON.stringify(curCourse)); } catch (e) {}
-        closeSheet(); showCourseCard(); toast(`${COURSES.find(x => x.id === c).stages[+si].n} を選びました`, 2000);
-      });
-      sh.querySelector('#ccOff').onclick = () => { curCourse = null; try { localStorage.removeItem('monst-course'); } catch (e) {} closeSheet(); showCourseCard(); };
+      sh.querySelectorAll('[data-cc]').forEach(b => b.onclick = () => { closeSheet(); enterCourse(b.dataset.cc, curCourse && curCourse.c === b.dataset.cc ? curCourse.s : 0); });
       sh.querySelector('#closeS').onclick = closeSheet;
     });
   }
+  let courseOn = false, cpSel = null, cpMatches = [];
+  function saveCourse() { try { localStorage.setItem('monst-course', JSON.stringify({...curCourse, on: courseOn})); } catch (e) {} }
+  function enterCourse(cid, si) {
+    curCourse = {c: cid, s: si}; courseOn = true; saveCourse();
+    S.pierce = true; S.antiBlock = true; S.bounces = Math.max(S.bounces, 6); persist();
+    document.body.classList.add('course'); setMode('course');
+  }
+  function exitCourse() { courseOn = false; saveCourse(); document.body.classList.remove('course'); cpSel = null; setMode('ball'); }
+  function renderCourse() {
+    const cs = courseStage(); if (!cs) return;
+    $('cpTitle').textContent = cs.c.name;
+    $('cpStages').innerHTML = cs.c.stages.map((st, i) => `<button data-st="${i}" class="${i === curCourse.s ? 'on' : ''}">${esc(st.n.replace(/ .*/, ''))}</button>`).join('');
+    $('cpStages').querySelectorAll('[data-st]').forEach(b => b.onclick = () => { curCourse.s = +b.dataset.st; saveCourse(); cpSel = null; renderCourse(); draw(); });
+    const list = (ROUTES[cs.c.id] || []).filter(r => r.s === curCourse.s);
+    cpMatches = matchRoutes(list);
+    const disp = a => { let d = a + 90; d = ((d + 180) % 360 + 360) % 360 - 180; return d.toFixed(1); };
+    const where = m => m.leg < 0 ? '打ち出しの後ろ側から' : m.leg === 1 ? '1本目の線の上' : `${m.leg}本目の線の上（${m.leg - 1}回反射後）`;
+    const mmss = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    $('cpHint').textContent = cpMatches.length ? `${cs.st.n}：今の玉から取れるルート ${cpMatches.length}本（タップで線を表示）`
+      : `${cs.st.n}：今の玉の位置から乗れるルートはありません（ルート${list.length}本と照合）。玉の位置を確認してください`;
+    $('cpList').innerHTML = cpMatches.slice(0, 8).map((m, i) => {
+      const lv = m.dpx <= 10 ? '🟢' : m.dpx <= 20 ? '🟠' : '🟡';
+      return `<div class="cpr ${cpSel === i ? 'on' : ''}" data-i="${i}"><img src="course/r/${m.id}.jpg" alt=""><span class="ang">${disp(m.ang)}°</span>
+        <span class="d">${lv} ずれ${m.dpx}px・${where(m)}<br>動画 ${mmss(m.t)} のルート</span></div>`;
+    }).join('');
+    $('cpList').querySelectorAll('[data-i]').forEach(el => el.onclick = () => {
+      const i = +el.dataset.i; cpSel = cpSel === i ? null : i;
+      if (cpSel !== null) { S.angle = cpMatches[i].ang; persist(); }
+      renderCourse(); draw();
+    });
+  }
+  function courseInfo() {
+    const cs = courseStage(); if (!cs) return;
+    openSheet(`<h3>${esc(cs.c.name)} ${esc(cs.st.n)}</h3><div class="stg"><img src="course/${cs.st.img}.jpg" alt=""><div class="tx">${cs.st.pts.map(t => '・' + esc(t)).join('<br>')}</div></div>
+      <div class="small">${cs.c.common.map(t => '・' + esc(t)).join('<br>')}</div><button id="closeS">閉じる</button>`, sh => sh.querySelector('#closeS').onclick = closeSheet);
+  }
+  $('cpExit').onclick = exitCourse;
+  $('cpImg').onclick = () => $('file').click();
+  $('cpInfo').onclick = courseInfo;
+  $('cpZoom').onclick = () => { ballZoom = ballZoom ? null : [S.ball.x, S.ball.y]; $('cpZoom').classList.toggle('on', !!ballZoom); layout(); };
   $('courseBtn').onclick = () => { closeMenu(); courseSheet(); };
 
   // ======== route search: scan every angle, score by the goal ========
@@ -1781,12 +1835,13 @@
       sh.querySelector('#closeS').onclick = closeSheet;
     });
   }
-  $('mRoute').onclick = routeSheet;
+
 
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
   let savedStep = 'ball'; try { savedStep = localStorage.getItem('monst-step') || 'ball'; } catch (e) {}
   setMode('ball');
+  try { const v = JSON.parse(localStorage.getItem('monst-course') || 'null'); if (v && v.on && COURSES.some(c => c.id === v.c)) enterCourse(v.c, v.s || 0); } catch (e) {}
   restoreImage();
 })();
 </script>
