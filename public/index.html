@@ -172,7 +172,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.28';
+  const VERSION = '2.29';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1724,29 +1724,60 @@
   $('mSearch').onclick = searchRoutes;
 
   // ======== route collection: routes from the video that start near the current ball ========
+  // walls-only path (all-pierce, no blocks): list of segments {x0,y0,x1,y1,dx,dy}
+  function wallPath(x, y, ang, n) {
+    const f = S.field, p = wallPad(), xmin = f.l + p, xmax = f.r - p, ymin = f.t + p, ymax = f.b - p;
+    x = Math.min(Math.max(x, xmin), xmax); y = Math.min(Math.max(y, ymin), ymax);
+    let dx = Math.cos(ang * Math.PI / 180), dy = Math.sin(ang * Math.PI / 180); const segs = [];
+    for (let i = 0; i < n; i++) {
+      const tx = dx > 1e-9 ? (xmax - x) / dx : dx < -1e-9 ? (xmin - x) / dx : Infinity;
+      const ty = dy > 1e-9 ? (ymax - y) / dy : dy < -1e-9 ? (ymin - y) / dy : Infinity;
+      const t = Math.max(0, Math.min(tx, ty)); if (!isFinite(t)) break;
+      const x1 = x + dx * t, y1 = y + dy * t; segs.push({x0: x, y0: y, x1, y1, dx, dy});
+      x = x1; y = y1; if (tx <= t + 1e-6) dx = -dx; if (ty <= t + 1e-6) dy = -dy;
+    }
+    return segs;
+  }
+  // does the current ball sit on a recorded route (its path forward, or a little behind its start)?
+  function matchRoutes(list) {
+    const f = S.field, W = f.r - f.l, H = f.b - f.t, u = IW / 1170, TOL = 30 * u, out = [];
+    list.forEach(r => {
+      const px = f.l + r.x * W, py = f.t + r.y * H;
+      const fwd = wallPath(px, py, r.a, 6).map((sg, i) => ({...sg, leg: i + 1}));
+      const back = wallPath(px, py, r.a + 180, 2).map((sg, i) => ({x0: sg.x1, y0: sg.y1, x1: sg.x0, y1: sg.y0, dx: -sg.dx, dy: -sg.dy, leg: -(i + 1)}));
+      let best = null;
+      [...back, ...fwd].forEach(sg => {
+        const vx = sg.x1 - sg.x0, vy = sg.y1 - sg.y0, L2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((S.ball.x - sg.x0) * vx + (S.ball.y - sg.y0) * vy) / L2));
+        const d = Math.hypot(sg.x0 + vx * t - S.ball.x, sg.y0 + vy * t - S.ball.y);
+        if (d < TOL && (!best || d < best.d)) best = {d, ang: Math.atan2(sg.dy, sg.dx) * 180 / Math.PI, leg: sg.leg};
+      });
+      if (best) out.push({...r, ...best, dpx: Math.round(best.d / u)});
+    });
+    out.sort((p, q) => p.d - q.d);
+    const uniq = [];   // merge routes that give (almost) the same angle
+    out.forEach(m => { if (!uniq.some(o => Math.abs(((o.ang - m.ang + 540) % 360) - 180) < .6)) uniq.push(m); });
+    return uniq;
+  }
   function routeSheet() {
     const cs = courseStage();
     if (!cs) { toast('先に ⋯ →「📚 コース」でステージを選んでください', 3000); return; }
-    const f = S.field, bx = (S.ball.x - f.l) / (f.r - f.l), by = (S.ball.y - f.t) / (f.b - f.t);
-    const list = (ROUTES[cs.c.id] || []).filter(r => r.s === curCourse.s)
-      .map(r => ({...r, d: Math.hypot(r.x - bx, (r.y - by) * (f.b - f.t) / (f.r - f.l))})).sort((p, q) => p.d - q.d);
+    const list = (ROUTES[cs.c.id] || []).filter(r => r.s === curCourse.s);
+    const M = matchRoutes(list);
     const disp = a => { let d = a + 90; d = ((d + 180) % 360 + 360) % 360 - 180; return d.toFixed(1); };
     const mmss = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-    let html = `<h3>📼 ${esc(cs.c.name)} ${esc(cs.st.n)} のルート</h3>
-      <div class="small">ルート集動画で打っていたショットを、今の玉の位置に近い順に並べています。赤丸が打った位置、赤線が打った方向です。</div>`;
-    if (!list.length) html += '<div class="small">このステージのルートはありません。</div>';
-    list.forEach(r => {
-      const near = r.d < .06 ? '🟢 ほぼ同じ位置' : r.d < .14 ? '🟠 近い' : '⚪ 位置が違う';
-      html += `<div class="stg"><img src="course/r/${r.id}.jpg" alt=""><div class="tx"><b>${disp(r.a)}°</b>　${near}<br>動画 ${mmss(r.t)}
-        <div style="margin-top:6px;display:flex;gap:6px"><button data-ra="${r.a}">この角度</button><button data-rp="${r.id}">位置ごと</button></div></div></div>`;
+    const where = m => m.leg < 0 ? 'ルートの打ち出しの後ろ側' : m.leg === 1 ? 'ルートの1本目の線の上' : `ルートの${m.leg}本目の線の上（${m.leg - 1}回反射した後）`;
+    let html = `<h3>📼 ${esc(cs.c.name)} ${esc(cs.st.n)}：今の玉から取れるルート</h3>
+      <div class="small">ルート集の${list.length}本から、今の玉がそのルートの線の上（または打ち出しの少し後ろ）にあるものを探しました。そこから同じ向きに打てば、壁だけで反射するのでその先は同じルートになります。</div>`;
+    if (!M.length) html += `<div class="small" style="padding:10px 0">今の玉の位置から乗れるルートはありませんでした（ずれ30px以内で探しています）。玉の位置を確認してください。</div>`;
+    M.forEach(m => {
+      const lv = m.dpx <= 10 ? '🟢' : m.dpx <= 20 ? '🟠' : '🟡';
+      html += `<div class="stg"><img src="course/r/${m.id}.jpg" alt=""><div class="tx"><b>${disp(m.ang)}°</b>　${lv} ずれ${m.dpx}px<br>${where(m)}<br>元のルート：動画 ${mmss(m.t)}
+        <div style="margin-top:6px"><button data-ra="${m.ang}">この角度で打つ</button></div></div></div>`;
     });
-    html += '<button id="closeS">閉じる</button><div class="small">角度は動画から測った値で、±1°ほどずれることがあります。最後は線とずれ許容で調整してください。</div>';
+    html += '<button id="closeS">閉じる</button><div class="small">全貫通・ブロックなし前提で、壁の反射だけで照合しています。角度は動画から測った値なので±1°ほどずれることがあります。</div>';
     openSheet(html, sh => {
-      sh.querySelectorAll('[data-ra]').forEach(b => b.onclick = () => { S.angle = +b.dataset.ra; persist(); closeSheet(); setMode('aim'); });
-      sh.querySelectorAll('[data-rp]').forEach(b => b.onclick = () => {
-        const r = list.find(q => q.id === b.dataset.rp);
-        S.ball.x = f.l + r.x * (f.r - f.l); S.ball.y = f.t + r.y * (f.b - f.t); clampBall(); S.angle = r.a; persist(); closeSheet(); setMode('aim');
-      });
+      sh.querySelectorAll('[data-ra]').forEach(b => b.onclick = () => { S.angle = +b.dataset.ra; S.pierce = true; S.antiBlock = true; persist(); closeSheet(); setMode('aim'); });
       sh.querySelector('#closeS').onclick = closeSheet;
     });
   }
