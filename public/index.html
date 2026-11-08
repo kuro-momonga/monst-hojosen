@@ -192,7 +192,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.35';
+  const VERSION = '2.36';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -957,11 +957,59 @@
       if (cnt < 400 * u * u) continue;   // hearts / single digits are smaller
       const lw = (xb - xa) / u, lh = (yb - ya) / u;
       if (lw < 55 || lw > 110 || lh < 28 || lh > 46) continue;
-      out.push({x: x0 + (xa + xb) / 2, y: y0 + (ya + yb) / 2 + 58.5 * u});
+      // read the number: red mask of the bbox -> 36x16 box average -> NCC with 1st/2nd/3rd/4th templates
+      const bw = xb - xa + 1, bh = yb - ya + 1, F = new Float32Array(TPL_W * TPL_H);
+      for (let ty = 0; ty < TPL_H; ty++) for (let tx = 0; tx < TPL_W; tx++) {
+        const xs = xa + Math.floor(tx * bw / TPL_W), xe = xa + Math.max(Math.floor(tx * bw / TPL_W) + 1, Math.floor((tx + 1) * bw / TPL_W));
+        const ys = ya + Math.floor(ty * bh / TPL_H), ye = ya + Math.max(Math.floor(ty * bh / TPL_H) + 1, Math.floor((ty + 1) * bh / TPL_H));
+        let v = 0, n = 0; for (let yy = ys; yy < ye; yy++) for (let xx = xs; xx < xe; xx++) { v += red[yy * w + xx]; n++; }
+        F[ty * TPL_W + tx] = v / n;
+      }
+      const sc = LABEL_TPL.map(t => ncc(F, t)), ord = sc.map((v, i) => i).sort((a, b) => sc[b] - sc[a]);
+      const n = sc[ord[0]] > .7 && sc[ord[0]] - sc[ord[1]] > .2 ? ord[0] + 1 : 0;
+      out.push({x: x0 + (xa + xb) / 2, y: y0 + (ya + yb) / 2 + 58.5 * u, n, s: sc[ord[0]]});
     }
+    // keep only the best one per number
+    out.forEach(o => { if (o.n && out.some(p => p !== o && p.n === o.n && p.s > o.s)) o.n = 0; });
     labelCache = {img, v: out};
     return out;
   }
+  const TPL_W = 36, TPL_H = 16;
+  const LABEL_TPL = ['000012683000000000000000000000000000024899995000000000000000000001100000468999995000000000000000000025205200002269995000000111000000000355256200000029995000025555532200003555998400000029995000356878999971035559998555000029993000579652279985523599755555000029992000199951000555510579755421000029992000027997420012100556655200000029992000003589875200000555555200000029992000000236998640000555555200000028692000110001465655000203555000000012062000010200020125210100566002000002032000000000000000010000202001000002010000000000000100001000101010000002000000000000100100000000000100', '001899990000000000000000000000016995049999999200000000000000000000006995397523899800000000000000000000006995830000399910000000000000000000006995000000099910111000133100000000026995000000299900588726899800000014689994000000799500599989999950000369859993000002998000499975399950004796206993000007993000499700049950026963003993000049950000499500039950069930002993000289600000499500039950069810002893000886100000189300039950069800002793004752000000055200038640055700002373032620022210010100010220010500002013010210000310000000010000010020100003000312200200000000000000000001102001', '000599996000000000000000000000006776029999999930000000000000000000009998398500599980000000000000000000009997410000059982000000000000000000005997000000069980000111000120000000009997000000299920002999317980000005799997000003997200002999999980001589759997000269995000002999842330039994005997000577998520002999500000189940005997000000289971001999200000699900005997000000028997000999000000799300005896000000007679100999000001789000000795000000013257000339000001757000000555000000110033000105000000201500003202000011000010000001000000000111010001001000100000000000000000000000000000', '001001776500000000000000477500000000000006999100000000021000599900000000000018996000000000571000599900000001000059980000000004971000599900000000000199996531000039982210599900013300000599959971000399999920499902699982000999249971002899999930499978999997003995029971001289993200499995249999008990029971000079970000499920007999029930029971000079970000499900004999059700027971000059950000499900002999099301156896620059920000388700000995569855555577620027710000266700000655625355320002420030200000201300000105000000101000000002010210200000000002000000000000000000001100000000000002'].map(s => Float32Array.from(s, c => (+c + .5) / 10));
+  function ncc(a, b) {
+    let ma = 0, mb = 0; for (let i = 0; i < a.length; i++) { ma += a[i]; mb += b[i]; } ma /= a.length; mb /= b.length;
+    let ab = 0, aa = 0, bb = 0; for (let i = 0; i < a.length; i++) { const x = a[i] - ma, y = b[i] - mb; ab += x * y; aa += x * x; bb += y * y; }
+    return ab / Math.sqrt(aa * bb + 1e-9);
+  }
+  // whose turn: that character's portrait in the bottom panel pops up over the panel's top edge
+  function detectTurn() {
+    if (!img) return 0;
+    const u = IW / 1170, y0 = Math.round(IH * .5), h = IH - y0;
+    const c = document.createElement('canvas'); c.width = IW; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, 0, y0, IW, h, 0, 0, IW, h);
+    const d = g.getImageData(0, 0, IW, h).data;
+    const yellow = i => d[i] > 200 && d[i + 1] > 140 && d[i + 1] < 220 && d[i + 2] < 80;
+    const orange = i => d[i] > 200 && d[i + 1] > 110 && d[i + 1] < 210 && d[i + 2] < 90;
+    let P = -1;
+    for (let y = 0; y < h && P < 0; y++) { let n = 0; for (let x = 0; x < IW; x++) if (yellow((y * IW + x) * 4)) n++; if (n > IW * .5) P = y; }
+    if (P < 0) return 0;
+    const v = [0, 1, 2, 3].map(k => {
+      let n = 0, t = 0;
+      for (let y = Math.round(P + 68 * u); y < Math.round(P + 84 * u) && y < h; y++)
+        for (let x = Math.round((110 + 220 * k) * u); x < Math.round((230 + 220 * k) * u); x++) { t++; if (orange((y * IW + x) * 4)) n++; }
+      return t ? n / t : 1;
+    });
+    const ord = v.map((x, i) => i).sort((a, b) => v[a] - v[b]);
+    return v[ord[0]] < .6 && v[ord[1]] - v[ord[0]] > .25 ? ord[0] + 1 : 0;
+  }
+  // put the ball on the character whose turn it is (portrait popped up + its 1st..4th label)
+  function autoBall() {
+    const k = detectTurn(); if (!k) return 0;
+    const b = findLabelBalls().find(o => o.n === k); if (!b) return 0;
+    S.ball.x = b.x; S.ball.y = b.y; ballZoom = null; clampBall(); persist();
+    return k;
+  }
+  const ORD = ['', '1st', '2nd', '3rd', '4th'];
   function nearLabelBall(tx, ty) {
     const u = IW / 1170; let best = null, bd = 140 * u;
     for (const b of findLabelBalls()) { const dd = Math.hypot(b.x - tx, b.y - ty); if (dd < bd) { bd = dd; best = b; } }
@@ -1611,11 +1659,20 @@
       if (newShape && fk === 'guess') setTimeout(() => toast('はじめての画面サイズです。枠を推定したので、ずれていたら ⋯ →「枠を調整する」で合わせてください（次からは覚えます）', 5000), 400);
       $('radius').max = Math.round(IW / 6);
       S.pins = []; tipD = null;
-      if (courseOn) { S.enemies = []; S.blocks = []; S.mines = []; persist(); cpSel = null; setMode('course'); toast('キャラの真ん中をタップして玉を置いてください', 2500); return; }
+      if (courseOn) {
+        S.enemies = []; S.blocks = []; S.mines = []; persist(); cpSel = null; setMode('course');
+        const k = autoBall();
+        if (k) { renderCourse(); draw(); toast(`${ORD[k]}の番：玉を自動で置きました`, 2500); }
+        else toast('キャラの真ん中をタップして玉を置いてください', 2500);
+        return;
+      }
       const after = reset => {
         closeSheet();
         if (reset) { S.enemies = []; S.blocks = []; S.mines = []; cur = null; setTimeout(() => runDetect(true), 30); }
-        selEnemy = selBlock = -1; persist(); setMode('ball');
+        selEnemy = selBlock = -1; persist();
+        const k = autoBall();
+        if (k) { setMode(reset ? 'place' : 'aim'); setTimeout(() => toast(`${ORD[k]}の番：玉を自動で置きました${reset ? '（敵の配置を確認してください）' : ''}`, 3000), reset ? 600 : 0); }
+        else setMode('ball');
       };
       if (S.enemies.length || S.blocks.length) {
         openSheet(`<h3>前の配置はどうしますか？</h3>
