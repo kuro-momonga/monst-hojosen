@@ -219,7 +219,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.48';
+  const VERSION = '2.49';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -999,6 +999,16 @@
     pass(green, green, LABEL_TPL, 58.5, 18, .1);   // green in the usual font (colourful labels)
     // keep only the best one per number
     out.forEach(o => { if (o.n && out.some(p => p !== o && p.n === o.n && p.s > o.s)) o.n = 0; });
+    // 3 numbers read -> the 4th is the one unread label left (not on top of a read one)
+    const got = [1, 2, 3, 4].filter(n => out.some(o => o.n === n));
+    if (got.length === 3) {
+      const miss = [1, 2, 3, 4].find(n => !got.includes(n));
+      const cand = out.filter(o => !o.n && !out.some(p => p.n && Math.hypot(p.x - o.x, p.y - o.y) < 90 * u));
+      const uniq = []; cand.forEach(o => { if (!uniq.some(q => Math.hypot(q.x - o.x, q.y - o.y) < 60 * u)) uniq.push(o); });
+      const strong = uniq.filter(o => !o.weak);
+      const pick = strong.length === 1 ? strong[0] : (strong.length === 0 && uniq.length === 1 ? uniq[0] : null);
+      if (pick) { pick.n = miss; pick.inferred = true; }
+    }
     labelCache = {img, v: out};
     return out;
     function pass(core, mask, TPL, off, hmin, margin) {
@@ -1016,9 +1026,13 @@
         if (core[i]) { cnt++; if (x < xa) xa = x; if (x > xb) xb = x; if (y < ya) ya = y; if (y > yb) yb = y; }
         for (const j of [i - 1, i + 1, i - w, i + w]) if (j >= 0 && j < N && !seen[j] && dil[j] && Math.abs((j % w) - x) <= 1) { seen[j] = 1; st.push(j); }
       }
-      if (cnt < (hmin < 28 ? 180 : 400) * u * u) continue;   // hearts / single digits are smaller
       const lw = (xb - xa) / u, lh = (yb - ya) / u;
-      if (lw < 55 || lw > 110 || lh < hmin || lh > 46) continue;
+      if (cnt < (hmin < 28 ? 180 : 400) * u * u || lw < 55 || lw > 110 || lh < hmin || lh > 46) {
+        // partly hidden label (damage numbers / effects on top): keep as a weak candidate
+        if (cnt >= 150 * u * u && lw >= 45 && lw <= 130 && lh >= 16 && lh <= 60)
+          out.push({x: x0 + (xa + xb) / 2, y: y0 + (ya + yb) / 2 + off * u, n: 0, s: 0, weak: true});
+        continue;
+      }
       // read the number: red mask of the bbox -> 36x16 box average -> NCC with 1st/2nd/3rd/4th templates
       const bw = xb - xa + 1, bh = yb - ya + 1, F = new Float32Array(TPL_W * TPL_H);
       for (let ty = 0; ty < TPL_H; ty++) for (let tx = 0; tx < TPL_W; tx++) {
