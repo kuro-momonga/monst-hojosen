@@ -13,11 +13,11 @@
 
 必要なもの: Python 3（標準ライブラリだけで動きます）、adb（BlueStacks 付属の HD-Adb.exe を自動で探します）
 """
-import argparse, json, math, os, random, shutil, subprocess, sys
+import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 9
+HELPER_VER = 10
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -92,12 +92,12 @@ class Adb:
             px, py, prev = sx, sy, 0.0
             for (tx, ty), c in zip(pts, cuts):
                 dur = (c - prev) * T; prev = c
-                n = max(2, round(dur / .06))
+                n = max(2, round(dur / .016))
                 for i in range(1, n + 1):
                     path.append((px + (tx - px) * i / n, py + (ty - py) * i / n, dur / n))
                 px, py = tx, ty
         else:
-            n = max(6, round(ms / 1000 / .06))
+            n = max(6, round(ms / 1000 / .016))
             for i in range(1, n + 1):
                 t = i / n; t = t * t * (3 - 2 * t)
                 path.append((sx + (ex - sx) * t, sy + (ey - sy) * t, ms / 1000 / n))
@@ -145,6 +145,58 @@ class Adb:
         return self._touch
 
     def send_touch(self, sx, sy, path):
+        self._sent_all = False
+        try:
+            return self.send_touch_stream(sx, sy, path)
+        except Exception as e:
+            if self._sent_all:   # the drag already went through: don't shoot twice
+                print("stream warning:", e); return
+            print("stream failed, falling back to script:", e)
+            return self.send_touch_script(sx, sy, path)
+
+    def conv_fn(self):
+        t = self._touch; w, h = self.size
+        (x0, x1), (y0, y1) = t["x"], t["y"]
+        swap = (x1 - x0 > y1 - y0) != (w > h)
+        def conv(x, y):
+            if swap:
+                x, y = y, w - x
+                return round(x0 + x / (h - 1) * (x1 - x0)), round(y0 + y / (w - 1) * (y1 - y0))
+            return round(x0 + x / (w - 1) * (x1 - x0)), round(y0 + y / (h - 1) * (y1 - y0))
+        return conv
+
+    def send_touch_stream(self, sx, sy, path):
+        """Smooth (~60 fps): one `cat > /dev/input/eventX` on the emulator, raw input_event structs streamed and paced from here."""
+        if not hasattr(self, "_evsize"):
+            abi = self.run("shell", "getprop", "ro.product.cpu.abi").strip()
+            self._evsize = 24 if "64" in abi else 16
+        fmt = "<qqHHi" if self._evsize == 24 else "<iiHHi"
+        pk = lambda a, b, c: struct.pack(fmt, 0, 0, a, b, c)
+        conv = self.conv_fn(); d = self._touch["dev"]
+        p = subprocess.Popen([self.exe, "-s", self.serial, "exec-in", f"cat > {d}"], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        def send(*evs):
+            p.stdin.write(b"".join(pk(*e) for e in evs)); p.stdin.flush()
+        X, Y = conv(sx, sy)
+        t0 = time.perf_counter(); due = 0.0
+        send((3, 57, 1), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
+        for x, y, wait in path:
+            due += wait
+            X, Y = conv(x, y)
+            send((3, 53, X), (3, 54, Y), (0, 0, 0))
+            sl = t0 + due - time.perf_counter()
+            if sl > 0: time.sleep(sl)
+        send((3, 57, -1), (1, 330, 0), (0, 0, 0))
+        self._sent_all = True
+        p.stdin.close()
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+        err = (p.stderr.read() or b"").decode(errors="ignore")
+        if p.returncode not in (0, None) or "denied" in err.lower() or "rror" in err:
+            raise RuntimeError(err.strip()[:200] or f"exit {p.returncode}")
+
+    def send_touch_script(self, sx, sy, path):
         t = self._touch; w, h = self.size; d = t["dev"]
         (x0, x1), (y0, y1) = t["x"], t["y"]
         swap = (x1 - x0 > y1 - y0) != (w > h)   # touch panel in the other orientation
