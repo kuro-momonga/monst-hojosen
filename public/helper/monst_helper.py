@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 31
+HELPER_VER = 32
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -121,12 +121,12 @@ class Adb:
                     path.append((*at(a0 + (a1 - a0) * u, L0_ + (L1 - L0_) * u), dur / n))
             def pause(t):
                 path.append((*path[-1][:2], t)) if path else None
-            err = math.radians(random.uniform(25, 70)) * random.choice((1, -1))
+            err = math.radians(random.uniform(10, 25)) * random.choice((1, -1))   # stay within ±25° of the real aim
             ca, cL = base + err, L0 * random.uniform(.5, .9)
-            move(base + err * 1.3, L0 * .1, ca, cL, random.uniform(.18, .35))   # first pull
+            move(base + err, L0 * .1, ca, cL, random.uniform(.9, 1.6))   # first pull: unhurried
             pause(random.uniform(.15, .5))
-            if random.random() < .45:   # look around once
-                la = base + math.radians(random.uniform(60, 170)) * random.choice((1, -1)); lL = L0 * random.uniform(.6, 1.1)
+            if random.random() < .45:   # look the other way once (still within ±25°)
+                la = base + math.radians(random.uniform(12, 25)) * (-1 if err > 0 else 1); lL = L0 * random.uniform(.6, 1.1)
                 move(ca, cL, la, lL, random.uniform(.4, .8)); pause(random.uniform(.2, .6))
                 ca, cL = la, lL
             for k in range(random.randint(3, 6)):
