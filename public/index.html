@@ -211,6 +211,7 @@
     <button id="stages">📁 ステージ保存・読み込み</button>
     <button id="watchBtn" style="display:none">🖥 スクショフォルダを自動で読む（PC）</button>
     <button id="bsBtn">🎮 BlueStacks連携（PC）</button>
+    <button id="kpBtn">新しい画像の配置：毎回聞く</button>
     <button id="dim">画面：通常</button>
     <button id="detect">敵・ブロックを自動検出</button>
     <button id="eClear" class="danger">敵とブロックを全部消す</button>
@@ -228,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.54';
+  const VERSION = '2.55';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1788,12 +1789,18 @@
         if (k) { setMode(reset ? 'place' : 'aim'); setTimeout(() => toast(`${ORD[k]}の番：玉を自動で置きました${reset ? '（敵の配置を確認してください）' : ''}`, 3000), reset ? 600 : 0); }
         else setMode('ball');
       };
+      let kp = null; try { kp = localStorage.getItem('monst-keepPref'); } catch (e) {}
+      if ((S.enemies.length || S.blocks.length) && kp) { after(kp === 'reset'); return; }
       if (S.enemies.length || S.blocks.length) {
         openSheet(`<h3>前の配置はどうしますか？</h3>
           <div class="small">敵 ${S.enemies.length}体・ブロック ${S.blocks.length}個が置かれています</div>
           <button id="keepP" class="on" style="padding:13px">そのまま使う（玉の位置だけ決める）</button>
-          <button id="resetP" style="padding:13px">リセットして作り直す（敵・ブロックを自動検出）</button>`,
-          sh => { sh.querySelector('#keepP').onclick = () => after(false); sh.querySelector('#resetP').onclick = () => after(true); });
+          <button id="resetP" style="padding:13px">リセットして作り直す（敵・ブロックを自動検出）</button>
+          <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="kpRem">次から聞かずにこの選び方にする（⋯ メニューで戻せます）</label>`,
+          sh => {
+            const pick = reset => { if (sh.querySelector('#kpRem').checked) { try { localStorage.setItem('monst-keepPref', reset ? 'reset' : 'keep'); } catch (e) {} syncKp(); } after(reset); };
+            sh.querySelector('#keepP').onclick = () => pick(false); sh.querySelector('#resetP').onclick = () => pick(true);
+          });
         setMode('ball');
       } else after(true);
     };
@@ -1932,6 +1939,17 @@
   }
   document.querySelectorAll('.bsShot').forEach(b => b.onclick = bsCapture);
   document.querySelectorAll('.bsFire').forEach(b => b.onclick = bsFire);
+  function syncKp() {
+    let kp = null; try { kp = localStorage.getItem('monst-keepPref'); } catch (e) {}
+    $('kpBtn').textContent = '新しい画像の配置：' + (kp === 'keep' ? 'そのまま使う' : kp === 'reset' ? '毎回リセット' : '毎回聞く') + '（押すと切替）';
+  }
+  $('kpBtn').onclick = () => {
+    let kp = null; try { kp = localStorage.getItem('monst-keepPref'); } catch (e) {}
+    const nx = kp == null ? 'keep' : kp === 'keep' ? 'reset' : null;
+    try { nx ? localStorage.setItem('monst-keepPref', nx) : localStorage.removeItem('monst-keepPref'); } catch (e) {}
+    syncKp();
+  };
+  syncKp();
   $('bsBtn').onclick = () => {
     closeMenu();
     openSheet(`<h3>🎮 BlueStacks連携（PC）</h3>
