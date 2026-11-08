@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 16
+HELPER_VER = 17
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -255,14 +255,20 @@ class Adb:
         self._sent_all = True
         for _ in range(4):          # harmless empty SYN reports: push the tail through any buffering
             send(*[(0, 0, 0)] * 100); time.sleep(.05)
-        time.sleep(1.0)            # let adb deliver the tail before closing (closing early dropped the release)
+        time.sleep(.6)             # let adb deliver what it can
         p.stdin.close()
         try:
-            p.wait(timeout=5)
+            p.wait(timeout=1.5)
         except subprocess.TimeoutExpired:
             p.kill()
         err = (p.stderr.read() or b"").decode(errors="ignore").strip()
         print("dd:", err.replace("\n", " | ")[:200])
+        # the stream process is gone now, so nothing can overtake this: make sure the finger is lifted
+        # at the exact aim point (the tail of the stream can get stuck in buffers and never arrive)
+        ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
+        self.run("shell", "; ".join([ev(3, 57, 1), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0), "sleep 0.05",
+                                     ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0), "sleep 0.05",
+                                     ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]), timeout=15)
         if any(k in err for k in ("nvalid", "denied", "not found", "rror")):
             raise RuntimeError(err[:200])
 
