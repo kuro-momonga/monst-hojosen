@@ -89,7 +89,7 @@ class Adb:
         best = None
         # random pull length every shot (the arrow size changes), then the integer point closest to the angle near it
         Lc = random.uniform(.15, .70) * w
-        cx += random.uniform(-.04, .04) * w; cy += random.uniform(-.03, .03) * h   # press point varies a bit too
+        cx = round(cx + random.uniform(-.04, .04) * w); cy = round(cy + random.uniform(-.03, .03) * h)   # press point varies a bit too
         # if the long pull would leave the screen, shorten it until it fits
         room = min([(w - 6 - cx) / dx if dx > 0 else (cx - 6) / -dx if dx < 0 else 1e9,
                     (h - 6 - cy) / dy if dy > 0 else (cy - 6) / -dy if dy < 0 else 1e9])
