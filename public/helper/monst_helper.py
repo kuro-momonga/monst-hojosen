@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 18
+HELPER_VER = 19
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -169,6 +169,14 @@ class Adb:
         path.append((ex, ey, hold / 1000))
 
         how, errs = None, []
+        # debug: record what the kernel really receives on the touch device during the shot
+        mon = None
+        if self.touch():
+            try:
+                mon = subprocess.Popen([self.exe, "-s", self.serial, "shell", "getevent", "-lt", self._touch["dev"]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                time.sleep(.3)
+            except Exception:
+                mon = None
         if self.touch() and method != "swipe":
             try:
                 if method == "script":
@@ -180,6 +188,14 @@ class Adb:
         if how is None:
             self.run("shell", "input", "swipe", str(sx), str(sy), str(ex), str(ey), str(int(ms + hold)), timeout=30)
             how = "swipe"
+        if mon:
+            time.sleep(.5); mon.kill()
+            lines = [l for l in (mon.stdout.read() or b"").decode(errors="ignore").splitlines() if l.strip()]
+            keys = [l for l in lines if "TRACKING_ID" in l or "BTN_TOUCH" in l]
+            print(f"--- touch log: {len(lines)} events. down/up:")
+            for l in keys[-8:]: print("   ", l.strip())
+            print("--- last events:")
+            for l in lines[-6:]: print("   ", l.strip())
         conv = self.conv_fn() if self._touch else None
         return {"from": [sx, sy], "to": [ex, ey], "err_deg": round(err, 4), "how": how, "notes": errs,
                 "dev_from": conv(sx, sy) if conv else None, "dev_to": conv(ex, ey) if conv else None}
