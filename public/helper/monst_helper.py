@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 7
+HELPER_VER = 8
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -95,7 +95,7 @@ class Adb:
             while used < T:
                 ta = base + math.radians(random.uniform(-180, 180)); tL = L0 * random.uniform(.4, 1.15)
                 dur = min(T - used, random.choice([random.uniform(.08, .25), random.uniform(.3, .6), random.uniform(.7, 1.2)]))
-                n = max(2, round(dur / .04))
+                n = max(2, round(dur / .06))
                 for i in range(1, n + 1):
                     t = i / n; t = t * t * (3 - 2 * t)
                     path.append((*at(cur_a + (ta - cur_a) * t, cur_L + (tL - cur_L) * t), dur / n))
@@ -106,7 +106,7 @@ class Adb:
             cur_a, cur_L = base, 0
         # final approach: random speed profile + zigzag that fades out right before the release
         fin = ms / 1000 * random.uniform(.6, 1.6) if wander else ms / 1000
-        n = max(8, round(fin / .04))
+        n = max(8, round(fin / .06))
         zz = random.uniform(.10, .35) if wander else 0      # zigzag amplitude (rad)
         zf = random.uniform(2, 6)                            # zigzag wiggles
         prof = random.choice(["ease", "fast-slow", "slow-fast", "jerky"]) if wander else "ease"
@@ -129,15 +129,6 @@ class Adb:
                 self.send_touch(sx, sy, path); how = "sendevent"
             except Exception as e:
                 errs.append(f"sendevent: {e}")
-        if how is None and wander and method != "swipe":
-            try:
-                cmds = [f"input motionevent DOWN {sx} {sy}"] + [f"input motionevent MOVE {round(x)} {round(y)}" for x, y, _ in path[::6]] + [f"input motionevent MOVE {ex} {ey}", f"sleep {hold / 1000:.2f}", f"input motionevent UP {ex} {ey}"]
-                out = self.run("shell", "; ".join(cmds), timeout=40)
-                if "Error" in out or "Unknown" in out:
-                    raise RuntimeError(out.strip()[:200])
-                how = "motionevent"
-            except Exception as e:
-                errs.append(f"motionevent: {e}")
         if how is None:
             self.run("shell", "input", "swipe", str(sx), str(sy), str(ex), str(ey), str(int(ms + hold)), timeout=30)
             how = "swipe"
@@ -193,8 +184,16 @@ class Adb:
             if pend > .02:
                 cmds.append(f"sleep {pend:.2f}"); pend = 0.0
         cmds += [ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]
-        out = self.run("shell", "; ".join(cmds), timeout=60)
-        if "rror" in out or "denied" in out.lower():
+        # a long drag is hundreds of commands: too long for one command line -> push a script file and run it
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, newline="\n") as f:
+            f.write("\n".join(cmds) + "\n"); local = f.name
+        try:
+            self.run("push", local, "/data/local/tmp/monst_drag.sh", timeout=20)
+        finally:
+            os.unlink(local)
+        out = self.run("shell", "sh /data/local/tmp/monst_drag.sh 2>&1", timeout=60)
+        if "rror" in out or "denied" in out.lower() or "not found" in out:
             raise RuntimeError(out.strip()[:200])
 
 
