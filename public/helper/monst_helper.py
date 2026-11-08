@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 32
+HELPER_VER = 33
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -122,7 +122,7 @@ class Adb:
             def pause(t):
                 path.append((*path[-1][:2], t)) if path else None
             err = math.radians(random.uniform(10, 25)) * random.choice((1, -1))   # stay within ±25° of the real aim
-            ca, cL = base + err, L0 * random.uniform(.5, .9)
+            ca, cL = base + err, L0 * random.uniform(.35, 1.3)
             move(base + err, L0 * .1, ca, cL, random.uniform(.9, 1.6))   # first pull: unhurried
             pause(random.uniform(.15, .5))
             if random.random() < .45:   # look the other way once (still within ±25°)
@@ -131,9 +131,11 @@ class Adb:
                 ca, cL = la, lL
             for k in range(random.randint(3, 6)):
                 err *= -random.uniform(.25, .6) if random.random() < .5 else random.uniform(.25, .6)
-                na, nL = base + err, L0 * random.uniform(.85, 1.1)
-                d = abs((na - ca + math.pi) % (2 * math.pi) - math.pi)
-                move(ca, cL, ca + ((na - ca + math.pi) % (2 * math.pi) - math.pi), nL, .12 + d * random.uniform(.4, .9))
+                na, nL = base + err, L0 * random.uniform(.4, 1.4)        # the arrow grows and shrinks a lot
+                if random.random() < .3: na = ca                          # sometimes only pull in / out
+                d = abs((na - ca + math.pi) % (2 * math.pi) - math.pi) + abs(nL - cL) / max(L0, 1) * .6
+                speed = random.choice([random.uniform(.35, .7), random.uniform(.8, 1.3), random.uniform(1.5, 2.6)])   # quick / normal / slow
+                move(ca, cL, ca + ((na - ca + math.pi) % (2 * math.pi) - math.pi), nL, (.15 + d * .9) * speed)
                 ca, cL = na, nL
                 pause(random.choice([random.uniform(.05, .2), random.uniform(.2, .6), random.uniform(.6, 1.1)]))
             move(ca, cL, base, L0, random.uniform(.25, .5))
