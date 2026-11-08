@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 19
+HELPER_VER = 20
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -172,11 +172,11 @@ class Adb:
         # debug: record what the kernel really receives on the touch device during the shot
         mon = None
         if self.touch():
-            try:
-                mon = subprocess.Popen([self.exe, "-s", self.serial, "shell", "getevent", "-lt", self._touch["dev"]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                time.sleep(.3)
-            except Exception:
-                mon = None
+            try:   # record on the emulator itself (no adb buffering), read it back afterwards
+                self.run("shell", f"pkill -f 'getevent -lt' ; (getevent -lt {self._touch['dev']} > /data/local/tmp/monst_ge.txt 2>&1 &) ; sleep 0.3", timeout=10)
+                mon = True
+            except Exception as e:
+                print("getevent start failed:", e)
         if self.touch() and method != "swipe":
             try:
                 if method == "script":
@@ -189,8 +189,14 @@ class Adb:
             self.run("shell", "input", "swipe", str(sx), str(sy), str(ex), str(ey), str(int(ms + hold)), timeout=30)
             how = "swipe"
         if mon:
-            time.sleep(.5); mon.kill()
-            lines = [l for l in (mon.stdout.read() or b"").decode(errors="ignore").splitlines() if l.strip()]
+            time.sleep(1.0)
+            try:
+                raw = self.run("shell", "pkill -f 'getevent -lt'; cat /data/local/tmp/monst_ge.txt; echo ---PS---; ps -A | grep -E ' (dd|getevent)$'", timeout=15)
+            except Exception as e:
+                raw = f"read failed: {e}"
+            body, _, ps = raw.partition("---PS---")
+            lines = [l for l in body.splitlines() if l.strip()]
+            print("--- leftover processes:", " / ".join(l.strip() for l in ps.splitlines() if l.strip()) or "none")
             keys = [l for l in lines if "TRACKING_ID" in l or "BTN_TOUCH" in l]
             print(f"--- touch log: {len(lines)} events. down/up:")
             for l in keys[-8:]: print("   ", l.strip())
