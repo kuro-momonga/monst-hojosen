@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 8
+HELPER_VER = 9
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -81,46 +81,26 @@ class Adb:
             raise RuntimeError("引っ張る先が画面からはみ出します")
         err, ex, ey = best
         sx, sy = round(cx), round(cy)
-        steps = max(4, round(ms / 250))
-        # path: list of (x, y, pause_after_s). Only the release point decides the shot.
-        base = math.atan2(ey - sy, ex - sx); L0 = math.hypot(ex - sx, ey - sy)
-        def at(ang, L):
-            return (min(w - 5, max(5, sx + math.cos(ang) * L)), min(h - 5, max(5, sy + math.sin(ang) * L)))
+        # path: list of (x, y, wait_s). Touch down at (sx, sy), release at (ex, ey): only these two decide the shot.
         path = []
-        cur_a, cur_L = base + random.uniform(-.3, .3), L0 * random.uniform(.3, .6)
         if wander:
-            # 寄り道: swing up to ±180° from the real aim for about 3 s, sometimes fast, sometimes slow
-            path.append((*at(cur_a, cur_L), .05))
-            T, used = random.uniform(2.5, 3.5), 0.0
-            while used < T:
-                ta = base + math.radians(random.uniform(-180, 180)); tL = L0 * random.uniform(.4, 1.15)
-                dur = min(T - used, random.choice([random.uniform(.08, .25), random.uniform(.3, .6), random.uniform(.7, 1.2)]))
+            # 寄り道: random total time, random points, random speed between them
+            T = random.uniform(2, 4)
+            k = random.randint(3, 7)
+            cuts = sorted(random.random() for _ in range(k)) + [1.0]
+            pts = [(random.uniform(.1, .9) * w, random.uniform(.15, .85) * h) for _ in range(k)] + [(ex, ey)]
+            px, py, prev = sx, sy, 0.0
+            for (tx, ty), c in zip(pts, cuts):
+                dur = (c - prev) * T; prev = c
                 n = max(2, round(dur / .06))
                 for i in range(1, n + 1):
-                    t = i / n; t = t * t * (3 - 2 * t)
-                    path.append((*at(cur_a + (ta - cur_a) * t, cur_L + (tL - cur_L) * t), dur / n))
-                if random.random() < .35:
-                    path.append((*at(ta, tL), random.uniform(.1, .5)))   # hesitate
-                cur_a, cur_L = ta, tL; used += dur
+                    path.append((px + (tx - px) * i / n, py + (ty - py) * i / n, dur / n))
+                px, py = tx, ty
         else:
-            cur_a, cur_L = base, 0
-        # final approach: random speed profile + zigzag that fades out right before the release
-        fin = ms / 1000 * random.uniform(.6, 1.6) if wander else ms / 1000
-        n = max(8, round(fin / .06))
-        zz = random.uniform(.10, .35) if wander else 0      # zigzag amplitude (rad)
-        zf = random.uniform(2, 6)                            # zigzag wiggles
-        prof = random.choice(["ease", "fast-slow", "slow-fast", "jerky"]) if wander else "ease"
-        for i in range(1, n + 1):
-            t = i / n
-            if prof == "ease": u = t * t * (3 - 2 * t)
-            elif prof == "fast-slow": u = 1 - (1 - t) ** 3
-            elif prof == "slow-fast": u = t ** 3
-            else: u = min(1, max(0, t + random.uniform(-.08, .08)))
-            da = (base - cur_a + math.pi) % (2 * math.pi) - math.pi
-            wig = zz * math.sin(zf * math.pi * t) * (1 - t) ** 1.5 if i < n else 0
-            Lw = (1 + (random.uniform(-.12, .12) if wander and i < n - 2 else 0))
-            dt = fin / n * (random.uniform(.3, 1.9) if prof == "jerky" else 1)
-            path.append((*at(cur_a + da * u + wig, (cur_L + (L0 - cur_L) * u) * Lw), dt))
+            n = max(6, round(ms / 1000 / .06))
+            for i in range(1, n + 1):
+                t = i / n; t = t * t * (3 - 2 * t)
+                path.append((sx + (ex - sx) * t, sy + (ey - sy) * t, ms / 1000 / n))
         path.append((ex, ey, hold / 1000))
 
         how, errs = None, []
