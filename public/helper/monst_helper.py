@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 13
+HELPER_VER = 14
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -208,7 +208,10 @@ class Adb:
         fmt = "<qqHHi" if self._evsize == 24 else "<iiHHi"
         pk = lambda a, b, c: struct.pack(fmt, 0, 0, a, b, c)
         conv = self.conv_fn(); d = self._touch["dev"]
-        p = subprocess.Popen([self.exe, "-s", self.serial, "exec-in", f"cat > {d}"], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        # dd regroups whatever arrives into whole events (obs = event size): the kernel rejects a write that splits an event,
+        # which used to kill the stream mid-drag (finger left down at a random angle, no release)
+        es = self._evsize
+        p = subprocess.Popen([self.exe, "-s", self.serial, "exec-in", f"dd of={d} ibs=4096 obs={es}"], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         def send(*evs):
             p.stdin.write(b"".join(pk(*e) for e in evs)); p.stdin.flush()
         X, Y = conv(sx, sy)
@@ -226,12 +229,18 @@ class Adb:
         send((3, 53, X), (3, 54, Y), (0, 0, 0)); time.sleep(.12)
         send((3, 57, -1), (1, 330, 0), (0, 0, 0))
         self._sent_all = True
+        for _ in range(4):          # harmless empty SYN reports: push the tail through any buffering
+            send(*[(0, 0, 0)] * 100); time.sleep(.05)
         time.sleep(1.0)            # let adb deliver the tail before closing (closing early dropped the release)
         p.stdin.close()
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
             p.kill()
+        err = (p.stderr.read() or b"").decode(errors="ignore").strip()
+        print("dd:", err.replace("\n", " | ")[:200])
+        if any(k in err for k in ("nvalid", "denied", "not found", "rror")):
+            raise RuntimeError(err[:200])
 
     def send_touch_script(self, sx, sy, path):
         t = self._touch; w, h = self.size; d = t["dev"]
