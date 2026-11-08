@@ -78,6 +78,7 @@
   body.course #mainRow, body.course .stepRow, body.course #pad{display:none !important}
   #cpCtl{display:none}
   #cpCtl.show{display:flex}
+  .needBall{display:block;color:#111;background:var(--accent);border-radius:8px;padding:8px 10px;font-size:13px}
   #cpFree.on, #cpArrow.on{background:var(--accent);color:#111}
   .wbtn.on{background:var(--accent);color:#111}
   #cpPhases{display:flex;gap:5px}
@@ -223,7 +224,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.52';
+  const VERSION = '2.53';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1567,11 +1568,11 @@
       // the turn ring changes size/colour or is absent: only snap when a clear ring is found
       const r = ballZoom ? null : (nearLabelBall(ix, iy) || findRing(ix, iy));
       if (r) { S.ball.x = r.x; S.ball.y = r.y; } else { S.ball.x = ix; S.ball.y = iy; }
-      if (mode === 'course') { cpSel = null; clampBall(); persist(); dragInfo = null; renderCourse(); draw(); return; }
+      if (mode === 'course') { cpSel = null; cpNeedBall = false; clampBall(); persist(); dragInfo = null; renderCourse(); draw(); return; }
       if (!ballZoom) { ballZoom = [S.ball.x, S.ball.y]; clampBall(); persist(); dragInfo = null; layout(); syncZoom(); return; }
     }
     const wasBall = dragInfo && dragInfo.kind === 'ballRel';
-    dragInfo = null; padFocus = null; clampBall(); persist(); if (mode === 'course' && wasBall) { cpSel = null; renderCourse(); } draw(); };
+    dragInfo = null; padFocus = null; clampBall(); persist(); if (mode === 'course' && wasBall) { cpSel = null; cpNeedBall = false; renderCourse(); } draw(); };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
 
@@ -1768,8 +1769,11 @@
       if (courseOn) {
         applyLayout(); cpSel = null; setMode('course');
         const k = autoBall();
-        if (k) { renderCourse(); draw(); toast(`${ORD[k]}の番：玉を自動で置きました`, 2500); }
-        else toast('キャラの真ん中をタップして玉を置いてください', 2500);
+        if (k) { cpNeedBall = false; renderCourse(); draw(); toast(`${ORD[k]}の番：玉を自動で置きました`, 2500); }
+        else {   // could not find the ball -> straight into ball placing (tap moves the ball, no lines)
+          cpNeedBall = true; cpFree = false; if (mode === 'arrow') setMode('course');
+          renderCourse(); draw(); toast('手番を読み取れませんでした。キャラの真ん中をタップして玉を置いてください', 3000);
+        }
         return;
       }
       const after = reset => {
@@ -2008,7 +2012,7 @@
       sh.querySelector('#closeS').onclick = closeSheet;
     });
   }
-  let courseOn = false, cpSel = null, cpMatches = [], cpFree = false;
+  let courseOn = false, cpSel = null, cpMatches = [], cpFree = false, cpNeedBall = false;
   function saveCourse() { try { localStorage.setItem('monst-course', JSON.stringify({...curCourse, on: courseOn})); } catch (e) {} }
   function enterCourse(cid, si) {
     curCourse = {c: cid, s: si}; courseOn = true; saveCourse();
@@ -2066,6 +2070,7 @@
     const mmss = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
     $('cpHint').textContent = cpMatches.length ? `${cs.st.n}：今の玉から取れるルート ${cpMatches.length}本（タップで線を表示）`
       : `${cs.st.n}：今の玉の位置から乗れるルートはありません（ルート${list.length}本と照合）。玉の位置を確認してください`;
+    if (cpNeedBall) $('cpHint').innerHTML = '<b class="needBall">① 手番を読み取れませんでした。キャラの真ん中をタップして玉を置いてください</b>';
     $('cpList').innerHTML = cpMatches.slice(0, 8).map((m, i) => {
       const lv = m.dpx <= 10 ? '🟢' : m.dpx <= 20 ? '🟠' : '🟡';
       return `<div class="cpr ${cpSel === i ? 'on' : ''}" data-i="${i}"><img src="course/r/${m.id}.jpg" alt=""><span class="ang">${disp(m.ang)}°</span>
