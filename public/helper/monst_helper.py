@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 30
+HELPER_VER = 31
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -88,8 +88,12 @@ class Adb:
         dx, dy = -math.cos(a), -math.sin(a)
         best = None
         # random pull length every shot (the arrow size changes), then the integer point closest to the angle near it
-        Lc = random.uniform(.22, .45) * w
+        Lc = random.uniform(.15, .70) * w
         cx += random.uniform(-.04, .04) * w; cy += random.uniform(-.03, .03) * h   # press point varies a bit too
+        # if the long pull would leave the screen, shorten it until it fits
+        room = min([(w - 6 - cx) / dx if dx > 0 else (cx - 6) / -dx if dx < 0 else 1e9,
+                    (h - 6 - cy) / dy if dy > 0 else (cy - 6) / -dy if dy < 0 else 1e9])
+        Lc = max(.12 * w, min(Lc, room - 14))
         for L in range(int(Lc - 12), int(Lc + 13)):
             ex, ey = round(cx + dx * L), round(cy + dy * L)
             if not (5 <= ex <= w - 5 and 5 <= ey <= h - 5):
