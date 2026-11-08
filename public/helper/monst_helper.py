@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 23
+HELPER_VER = 24
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -178,6 +178,7 @@ class Adb:
             except Exception as e:
                 print("getevent start failed:", e)
         if self.touch() and method != "swipe":
+            self.unstick()
             try:
                 if method == "script":
                     self.send_touch_script(sx, sy, path[::4] + [path[-1]]); how = "script"
@@ -277,7 +278,7 @@ class Adb:
             p.stdin.write(b"".join(pk(*e) for e in evs)); p.stdin.flush()
         X, Y = conv(sx, sy)
         t0 = time.perf_counter(); due = 0.0
-        send((3, 57, 1), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
+        tid = self.new_tid(); send((3, 47, 0), (3, 57, tid), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
         for x, y, wait in path:
             due += wait
             X, Y = conv(x, y)
@@ -303,11 +304,25 @@ class Adb:
         # the stream process is gone now, so nothing can overtake this: make sure the finger is lifted
         # at the exact aim point (the tail of the stream can get stuck in buffers and never arrive)
         ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
-        self.run("shell", "; ".join([ev(3, 57, 1), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0), "sleep 0.05",
+        self.run("shell", "; ".join([ev(3, 47, 0), ev(3, 57, self.new_tid()), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0), "sleep 0.05",
                                      ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0), "sleep 0.05",
                                      ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]), timeout=15)
         if any(k in err for k in ("nvalid", "denied", "not found", "rror")):
             raise RuntimeError(err[:200])
+
+    def new_tid(self):
+        # a new tracking id every gesture: the kernel drops a value equal to the current one, so reusing "1"
+        # after a stuck touch meant Android never saw a fresh press / a clean release
+        self._tid = (getattr(self, "_tid", random.randint(100, 30000)) + 1) % 60000 or 1
+        return self._tid
+
+    def unstick(self):
+        """lift a finger left down by an earlier failed attempt"""
+        try:
+            d = self._touch["dev"]
+            self.run("shell", f"sendevent {d} 3 47 0; sendevent {d} 3 57 -1; sendevent {d} 1 330 0; sendevent {d} 0 0 0; true", timeout=10)
+        except Exception:
+            pass
 
     def send_touch_frames(self, sx, sy, path):
         """All touch events go into one binary file on the emulator; a script writes them frame by frame
@@ -333,7 +348,7 @@ class Adb:
             lines.append(f"dd if=/data/local/tmp/monst_touch.bin of={d} bs={es} skip={idx} count={len(evs)} 2>/dev/null")
             idx += len(evs)
         X, Y = conv(sx, sy)
-        frame((3, 57, 1), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
+        frame((3, 47, 0), (3, 57, self.new_tid()), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
         for x, y, dt in frames:
             X, Y = conv(x, y)
             frame((3, 53, X), (3, 54, Y), (0, 0, 0))
@@ -359,7 +374,7 @@ class Adb:
         d = self._touch["dev"]; conv = self.conv_fn()
         ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
         X, Y = conv(sx, sy)
-        cmds = [ev(3, 57, 1), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0)]
+        cmds = [ev(3, 47, 0), ev(3, 57, self.new_tid()), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0)]
         pend = 0.0
         for x, y, p in path:
             X, Y = conv(x, y)
