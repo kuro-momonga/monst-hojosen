@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.66';
+  const VERSION = '2.67';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1938,7 +1938,7 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 10)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 11)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     toast(`🎯 ${displayAngle()}° で${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + 600);
     try {
       const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander()})});

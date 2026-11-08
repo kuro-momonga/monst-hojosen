@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 10
+HELPER_VER = 11
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -84,20 +84,25 @@ class Adb:
         # path: list of (x, y, wait_s). Touch down at (sx, sy), release at (ex, ey): only these two decide the shot.
         path = []
         if wander:
-            # 寄り道: random total time, random points, random speed between them
+            # 寄り道: random total time, a smooth curve (Catmull-Rom) through random points, speed varying along it
             T = random.uniform(2, 4)
-            k = random.randint(3, 7)
-            cuts = sorted(random.random() for _ in range(k)) + [1.0]
-            pts = [(random.uniform(.1, .9) * w, random.uniform(.15, .85) * h) for _ in range(k)] + [(ex, ey)]
-            px, py, prev = sx, sy, 0.0
-            for (tx, ty), c in zip(pts, cuts):
-                dur = (c - prev) * T; prev = c
-                n = max(2, round(dur / .016))
+            k = random.randint(3, 6)
+            P = [(sx, sy)] + [(random.uniform(.1, .9) * w, random.uniform(.15, .85) * h) for _ in range(k)] + [(ex, ey)]
+            P = [P[0]] + P + [P[-1]]
+            segs = len(P) - 3
+            wts = [random.uniform(.4, 1.6) for _ in range(segs)]; tot = sum(wts)
+            for j in range(segs):
+                p0, p1, p2, p3 = P[j], P[j + 1], P[j + 2], P[j + 3]
+                dur = T * wts[j] / tot
+                n = max(3, round(dur / .008))
                 for i in range(1, n + 1):
-                    path.append((px + (tx - px) * i / n, py + (ty - py) * i / n, dur / n))
-                px, py = tx, ty
+                    u = i / n; u = u * u * (3 - 2 * u)   # slow down / speed up around each point
+                    u2, u3 = u * u, u * u * u
+                    x = .5 * (2 * p1[0] + (-p0[0] + p2[0]) * u + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * u2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * u3)
+                    y = .5 * (2 * p1[1] + (-p0[1] + p2[1]) * u + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * u2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * u3)
+                    path.append((min(w - 5, max(5, x)), min(h - 5, max(5, y)), dur / n))
         else:
-            n = max(6, round(ms / 1000 / .016))
+            n = max(6, round(ms / 1000 / .008))
             for i in range(1, n + 1):
                 t = i / n; t = t * t * (3 - 2 * t)
                 path.append((sx + (ex - sx) * t, sy + (ey - sy) * t, ms / 1000 / n))
@@ -185,8 +190,6 @@ class Adb:
             send((3, 53, X), (3, 54, Y), (0, 0, 0))
             sl = t0 + due - time.perf_counter()
             if sl > 0: time.sleep(sl)
-        send((3, 57, -1), (1, 330, 0), (0, 0, 0))
-        self._sent_all = True
         p.stdin.close()
         try:
             p.wait(timeout=5)
@@ -195,6 +198,11 @@ class Adb:
         err = (p.stderr.read() or b"").decode(errors="ignore")
         if p.returncode not in (0, None) or "denied" in err.lower() or "rror" in err:
             raise RuntimeError(err.strip()[:200] or f"exit {p.returncode}")
+        # the end is sent with sendevent (known to work): exact release point, short hold, release
+        self._sent_all = True
+        ex_, ey_, _ = path[-1]; X, Y = conv(ex_, ey_)
+        ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
+        self.run("shell", "; ".join([ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0), "sleep 0.15", ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0), "sleep 0.1", ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]), timeout=15)
 
     def send_touch_script(self, sx, sy, path):
         t = self._touch; w, h = self.size; d = t["dev"]
