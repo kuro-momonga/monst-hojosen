@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 24
+HELPER_VER = 25
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -185,7 +185,12 @@ class Adb:
                 elif method == "stream":
                     self.send_touch(sx, sy, path); how = "sendevent"
                 else:
-                    self.send_touch_frames(sx, sy, path); how = "frames"
+                    # the raw-touch release isn't accepted as a shot on this emulator, so: human-like aiming with raw
+                    # touch, then the actual shot as a quick standard swipe (which always shoots) at the exact angle
+                    self.send_touch_frames(sx, sy, path)
+                    time.sleep(random.uniform(.05, .15))
+                    self.run("shell", "input", "swipe", str(sx), str(sy), str(ex), str(ey), str(random.randint(250, 450)), timeout=30)
+                    how = "frames+swipe"
             except Exception as e:
                 errs.append(f"sendevent: {e}")
         if how is None:
