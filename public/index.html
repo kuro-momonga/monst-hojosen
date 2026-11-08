@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.60';
+  const VERSION = '2.61';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1943,7 +1943,7 @@
     try {
       const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander()})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
-      toast(`🎯 ${displayAngle()}° で打ちました`, 2000);
+      toast(`🎯 ${displayAngle()}° で打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'motionevent' ? '細かく操作' : j.how === 'swipe' ? 'まっすぐ引く方式（寄り道できない）' : '旧方式'}）`, 4000);
     } catch (e) { toast('打てませんでした：' + e.message, 3000); bsStatus(true); }
   }
   document.querySelectorAll('.bsShot').forEach(b => b.onclick = bsCapture);
