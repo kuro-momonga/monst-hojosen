@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 28
+HELPER_VER = 29
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -168,7 +168,7 @@ class Adb:
                 out.append((min(w - 5, max(5, x + g * nx)), min(h - 5, max(5, y + g * ny)), dt2))
             path = out
         if wander:   # same moves, played faster (whole aiming about half the time)
-            K = random.uniform(.42, .6)
+            K = random.uniform(.25, .38)
             path = [(x, y, dt * K) for x, y, dt in path]
         path.append((ex, ey, hold / 1000))
 
@@ -186,12 +186,11 @@ class Adb:
             try:
                 if method == "script":
                     self.send_touch_script(sx, sy, path[::4] + [path[-1]]); how = "script"
-                elif method == "stream":
-                    self.send_touch(sx, sy, path); how = "sendevent"
-                else:
-                    # the raw-touch release isn't accepted as a shot on this emulator, so: human-like aiming with raw
-                    # touch, then the actual shot as a quick standard swipe (which always shoots) at the exact angle
+                elif method == "frames":
                     self.send_touch_frames(sx, sy, path); how = "frames"
+                else:
+                    # smooth: stream (one process on the emulator, paced from here at ~120 fps)
+                    self.send_touch(sx, sy, path); how = "stream"
             except Exception as e:
                 errs.append(f"sendevent: {e}")
         if how is None:
