@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 5
+HELPER_VER = 6
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -63,7 +63,7 @@ class Adb:
             data = data.replace(b"\r\n", b"\n")
         return data
 
-    def shoot(self, angle_deg, cx, cy, ms, hold=400, wander=False):
+    def shoot(self, angle_deg, cx, cy, ms, hold=400, wander=False, method="auto"):
         """Pull opposite to angle_deg (0 = right, clockwise +, screen y down) from (cx, cy).
         Picks the integer end point (pull length 0.3..0.42 of the width) whose direction is closest to the angle."""
         w, h = self.size
@@ -81,50 +81,109 @@ class Adb:
             raise RuntimeError("引っ張る先が画面からはみ出します")
         err, ex, ey = best
         sx, sy = round(cx), round(cy)
-        # slow pull: touch down, move in small steps over `ms`, hold still at the end, then release
-        # (each `input` call itself takes ~0.1-0.3 s on the emulator, so only a few steps)
         steps = max(4, round(ms / 250))
-        cmds = [f"input motionevent DOWN {sx} {sy}"]
-        # 寄り道: swing the pull direction around (up to ±180° from the real aim) for about 3 s,
-        # sometimes fast, sometimes slow, then settle on the real angle. Only the release point matters.
+        # path: list of (x, y, pause_after_s). Only the release point decides the shot.
         base = math.atan2(ey - sy, ex - sx); L0 = math.hypot(ex - sx, ey - sy)
         def at(ang, L):
             return (min(w - 5, max(5, sx + math.cos(ang) * L)), min(h - 5, max(5, sy + math.sin(ang) * L)))
+        path = []
         cur_a, cur_L = base + random.uniform(-.3, .3), L0 * random.uniform(.3, .6)
-        x, y = at(cur_a, cur_L); cmds.append(f"input motionevent MOVE {round(x)} {round(y)}")
         if wander:
+            # 寄り道: swing up to ±180° from the real aim for about 3 s, sometimes fast, sometimes slow
+            path.append((*at(cur_a, cur_L), .05))
             T, used = random.uniform(2.5, 3.5), 0.0
             while used < T:
-                ta = base + math.radians(random.uniform(-180, 180))
-                tL = L0 * random.uniform(.4, 1.15)
-                dur = min(T - used, random.choice([random.uniform(.08, .25), random.uniform(.3, .6), random.uniform(.7, 1.2)]))  # fast / normal / slow
-                n = max(1, round(dur / .15))
+                ta = base + math.radians(random.uniform(-180, 180)); tL = L0 * random.uniform(.4, 1.15)
+                dur = min(T - used, random.choice([random.uniform(.08, .25), random.uniform(.3, .6), random.uniform(.7, 1.2)]))
+                n = max(2, round(dur / .04))
                 for i in range(1, n + 1):
                     t = i / n; t = t * t * (3 - 2 * t)
-                    x, y = at(cur_a + (ta - cur_a) * t, cur_L + (tL - cur_L) * t)
-                    cmds.append(f"input motionevent MOVE {round(x)} {round(y)}")
-                    pause = dur / n - .15
-                    if pause > .01: cmds.append(f"sleep {pause:.2f}")
+                    path.append((*at(cur_a + (ta - cur_a) * t, cur_L + (tL - cur_L) * t), dur / n))
                 if random.random() < .35:
-                    p = random.uniform(.1, .5); cmds.append(f"sleep {p:.2f}"); used += p   # hesitate
+                    path.append((*at(ta, tL), random.uniform(.1, .5)))   # hesitate
                 cur_a, cur_L = ta, tL; used += dur
-        # final approach to the exact angle (rotate, then the exact integer end point)
-        for i in range(1, steps + 1):
-            t = i / steps; t = t * t * (3 - 2 * t)
+        else:
+            cur_a, cur_L = base, 0
+        n = max(6, round(ms / 1000 / .04))
+        for i in range(1, n + 1):
+            t = i / n; t = t * t * (3 - 2 * t)
             da = (base - cur_a + math.pi) % (2 * math.pi) - math.pi
-            x, y = at(cur_a + da * t, cur_L + (L0 - cur_L) * t)
-            cmds.append(f"input motionevent MOVE {round(x)} {round(y)}")
-        cmds += [f"input motionevent MOVE {ex} {ey}", f"sleep {hold / 1000:.3f}", f"input motionevent UP {ex} {ey}"]
-        try:
-            out = self.run("shell", "; ".join(cmds), timeout=30)
-            if "Error" in out or "Unknown" in out:
-                raise RuntimeError(out)
-            how = "motionevent"
-        except Exception:
-            # older Android: no motionevent -> a slow swipe
+            path.append((*at(cur_a + da * t, cur_L + (L0 - cur_L) * t), ms / 1000 / n))
+        path.append((ex, ey, hold / 1000))
+
+        how, errs = None, []
+        if self.touch() and method != "swipe":
+            try:
+                self.send_touch(sx, sy, path); how = "sendevent"
+            except Exception as e:
+                errs.append(f"sendevent: {e}")
+        if how is None and wander and method != "swipe":
+            try:
+                cmds = [f"input motionevent DOWN {sx} {sy}"] + [f"input motionevent MOVE {round(x)} {round(y)}" for x, y, _ in path[::6]] + [f"input motionevent MOVE {ex} {ey}", f"sleep {hold / 1000:.2f}", f"input motionevent UP {ex} {ey}"]
+                out = self.run("shell", "; ".join(cmds), timeout=40)
+                if "Error" in out or "Unknown" in out:
+                    raise RuntimeError(out.strip()[:200])
+                how = "motionevent"
+            except Exception as e:
+                errs.append(f"motionevent: {e}")
+        if how is None:
             self.run("shell", "input", "swipe", str(sx), str(sy), str(ex), str(ey), str(int(ms + hold)), timeout=30)
             how = "swipe"
-        return {"from": [sx, sy], "to": [ex, ey], "err_deg": round(err, 4), "how": how}
+        return {"from": [sx, sy], "to": [ex, ey], "err_deg": round(err, 4), "how": how, "notes": errs}
+
+    # ---- raw touch through the emulator's touchscreen device (sendevent): a real held drag ----
+    def touch(self):
+        if getattr(self, "_touch", 0) != 0:
+            return self._touch
+        self._touch = None
+        try:
+            out = self.run("shell", "getevent", "-pl", timeout=10)
+        except Exception:
+            return None
+        dev, name, info = None, "", {}
+        for line in out.splitlines() + ["add device 0: /end"]:
+            if line.startswith("add device"):
+                if dev and "x" in info and "y" in info:
+                    self._touch = {"dev": dev, "name": name, **info}
+                    if "touch" in name.lower():
+                        break
+                dev, name, info = line.split(":", 1)[1].strip(), "", {}
+            elif "name:" in line:
+                name = line.split("name:", 1)[1].strip().strip('"')
+            elif "ABS_MT_POSITION_X" in line or "ABS_MT_POSITION_Y" in line:
+                k = "x" if "_X" in line else "y"
+                try:
+                    lo = int(line.split("min")[1].split(",")[0].strip()); hi = int(line.split("max")[1].split(",")[0].strip())
+                    info[k] = (lo, hi)
+                except Exception:
+                    pass
+            elif "ABS_MT_TRACKING_ID" in line:
+                info["tid"] = True
+        return self._touch
+
+    def send_touch(self, sx, sy, path):
+        t = self._touch; w, h = self.size; d = t["dev"]
+        (x0, x1), (y0, y1) = t["x"], t["y"]
+        swap = (x1 - x0 > y1 - y0) != (w > h)   # touch panel in the other orientation
+        def conv(x, y):
+            if swap:
+                x, y = y, w - x
+                return round(x0 + x / (h - 1) * (x1 - x0)), round(y0 + y / (w - 1) * (y1 - y0))
+            return round(x0 + x / (w - 1) * (x1 - x0)), round(y0 + y / (h - 1) * (y1 - y0))
+        ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
+        X, Y = conv(sx, sy)
+        cmds = [ev(3, 57, 1), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0)]
+        pend = 0.0
+        for x, y, p in path:
+            X, Y = conv(x, y)
+            cmds += [ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0)]
+            pend += p - .03   # each sendevent line costs a little time itself
+            if pend > .02:
+                cmds.append(f"sleep {pend:.2f}"); pend = 0.0
+        cmds += [ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]
+        out = self.run("shell", "; ".join(cmds), timeout=60)
+        if "rror" in out or "denied" in out.lower():
+            raise RuntimeError(out.strip()[:200])
 
 
 def make_handler(adb):
@@ -154,7 +213,7 @@ def make_handler(adb):
             try:
                 if self.path.startswith("/status"):
                     w, h = adb.connect()
-                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER})
+                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch()})
                 if self.path.startswith("/screen"):
                     if not adb.size:
                         adb.connect()
@@ -173,7 +232,7 @@ def make_handler(adb):
                     w, h = adb.size
                     cx = q.get("cx", w / 2)
                     cy = q.get("cy", h * .45)
-                    r = adb.shoot(float(q["angle"]), cx, cy, float(q.get("ms", 1200)), float(q.get("hold", 400)), bool(q.get("wander")))
+                    r = adb.shoot(float(q["angle"]), cx, cy, float(q.get("ms", 1200)), float(q.get("hold", 400)), bool(q.get("wander")), q.get("method", "auto"))
                     print(f"shoot {q['angle']:.2f}deg  {r}")
                     return self.reply(200, {"ok": True, **r})
                 return self.reply(404, {"ok": False, "error": "not found"})
