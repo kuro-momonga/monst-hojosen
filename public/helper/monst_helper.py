@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 3
+HELPER_VER = 4
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -87,20 +87,24 @@ class Adb:
         cmds = [f"input motionevent DOWN {sx} {sy}"]
         # 寄り道: aim at a few random directions first, then settle on the real one (only the release point matters)
         pts = []
+        wander_T = random.uniform(2.5, 3.5)   # about 3 s of wandering in total
         if wander:
-            for _ in range(random.randint(2, 4)):
+            for _ in range(random.randint(3, 5)):
                 a2 = random.uniform(0, 2 * math.pi); L2 = random.uniform(.15, .4) * w
                 pts.append((min(w - 5, max(5, sx + math.cos(a2) * L2)), min(h - 5, max(5, sy + math.sin(a2) * L2))))
         pts.append((ex, ey))
         px, py = sx, sy
         for k, (tx, ty) in enumerate(pts):
             n = steps if k == len(pts) - 1 else random.randint(2, 4)
+            last = k == len(pts) - 1
             for i in range(1, n + 1):
+                if not last:   # spread the wandering time over the moves (each `input` itself takes ~0.15 s)
+                    cmds.append(f"sleep {max(0, wander_T / (len(pts) - 1) * random.uniform(.5, 1.5) / (n + 1) - .15):.2f}")
                 t = i / n
                 t = t * t * (3 - 2 * t)  # ease in/out
                 cmds.append(f"input motionevent MOVE {round(px + (tx - px) * t)} {round(py + (ty - py) * t)}")
-            if k < len(pts) - 1:
-                cmds.append(f"sleep {random.uniform(.1, .5):.2f}")
+            if not last:
+                cmds.append(f"sleep {max(0, wander_T / (len(pts) - 1) * random.uniform(.5, 1.5) / (n + 1)):.2f}")
             px, py = tx, ty
         cmds += [f"input motionevent MOVE {ex} {ey}", f"sleep {hold / 1000:.3f}", f"input motionevent UP {ex} {ey}"]
         try:
