@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 21
+HELPER_VER = 22
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -45,7 +45,7 @@ class Adb:
         cmd = [self.exe, "-s", self.serial, *args]
         r = subprocess.run(cmd, capture_output=True, timeout=timeout)
         if r.returncode != 0:
-            raise RuntimeError((r.stderr or r.stdout).decode(errors="ignore").strip() or "adb error")
+            raise RuntimeError(f"exit {r.returncode}: " + ((r.stderr or r.stdout).decode(errors="ignore").strip()[:200] or "adb error"))
         return r.stdout if binary else r.stdout.decode(errors="ignore")
 
     def connect(self):
@@ -407,7 +407,7 @@ def main():
         print(f"BlueStacks に接続しました（{adb.serial}、画面 {w}x{h}）")
     except Exception as e:
         print(f"まだ BlueStacks に接続できていません: {e}\n（BlueStacks を起動して ADB をオンにしてください。ツールから接続し直せます）")
-    print(f"ヘルパー起動中: http://127.0.0.1:{LISTEN}  （このウィンドウを閉じると止まります）")
+    print(f"ヘルパー v{HELPER_VER} 起動中: http://127.0.0.1:{LISTEN}  （このウィンドウを閉じると止まります）")
     ThreadingHTTPServer(("127.0.0.1", LISTEN), make_handler(adb)).serve_forever()
 
 
