@@ -66,6 +66,10 @@
   #courseCard .cc-h{display:flex;align-items:center;gap:6px;margin-bottom:4px}
   #courseCard .cc-h span{flex:1;font-weight:700}
   #courseCard button{padding:5px 8px;font-size:12px}
+  #ceBar{display:none;flex-direction:column;gap:6px;border:1px solid var(--accent);border-radius:10px;padding:8px}
+  body.cedit #ceBar{display:flex}
+  body.cedit #mainRow, body.cedit #row-place .next{display:none !important}
+  #cpEdit{padding:6px 9px;font-size:12px}
   #coursePanel{display:none;flex-direction:column;gap:8px}
   body.course #coursePanel{display:flex}
   body.course #mainRow, body.course .stepRow, body.course #pad{display:none !important}
@@ -130,9 +134,14 @@
   <div id="fieldBar"><button id="resetField">↺ 初期位置</button><button id="fieldDone" class="on">完了</button></div>
 </div>
 <div id="panel">
+  <div id="ceBar">
+    <div class="row" style="flex-wrap:nowrap;gap:6px"><b id="ceTitle" style="flex:1;font-size:13px"></b><button id="ceCancel">やめる</button><button id="ceDone" class="on">保存</button></div>
+    <div class="row" style="flex-wrap:nowrap;gap:6px"><button id="ceName">名前を変える</button><button id="ceReset">初期配置に戻す</button></div>
+    <div class="small">敵をタップで選択・ドラッグで移動、右の点で大きさ。敵や地雷の追加・削除は下のボタン。保存すると、このステージ・段階で使うたびにこの配置になります</div>
+  </div>
   <div id="coursePanel">
     <div class="row" style="flex-wrap:nowrap;gap:6px">
-      <button id="cpExit">✕</button><b id="cpTitle" style="flex:1;font-size:14px"></b>
+      <button id="cpExit">✕</button><b id="cpTitle" style="font-size:14px"></b><button id="cpEdit">✎ 編集</button><span style="flex:1"></span>
       <button id="cpImg">🖼 画像</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button>
     </div>
     <div id="cpStages"></div>
@@ -207,7 +216,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.41';
+  const VERSION = '2.42';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1296,6 +1305,10 @@
       ctx.setLineDash(sel ? [6, 4] : []);
       ctx.lineWidth = hit || sel ? 3 : 2; ctx.strokeStyle = hit ? '#ff4d88' : 'rgba(255,120,160,.85)'; ctx.stroke();
       ctx.setLineDash([]);
+      if (e.k && document.body.classList.contains('cedit')) {
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 3; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.strokeText(e.k, x, y + R * .55); ctx.fillText(e.k, x, y + R * .55);
+      }
       if (e.role === 'book') {
         ctx.fillStyle = '#ffd43b'; ctx.font = `bold ${Math.max(14, R * .5)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText('★', x, y);
@@ -1794,7 +1807,7 @@
         if (saveLib(L)) { cur = {q: name, s: q.stages.length - 1}; toast('保存しました', 2000); stageSheet(); syncUI(); }
       };
       sh.querySelector('#bkOut').onclick = () => {
-        const txt = JSON.stringify({app: 'monst-hojosen', v: 1, quests: loadLib()});
+        const txt = JSON.stringify({app: 'monst-hojosen', v: 1, quests: loadLib(), layouts: OVR});
         openSheet(`<h3>バックアップを書き出す</h3><div class="small">この文字をメモ帳などに保存しておくと、あとで読み込めます</div>
           <textarea id="bkTxt" readonly>${esc(txt)}</textarea><button id="bkCopy" class="on">コピー</button><button id="bkBack">戻る</button>`, s2 => {
           s2.querySelector('#bkCopy').onclick = async () => {
@@ -1811,6 +1824,7 @@
             try {
               const d = JSON.parse(s2.querySelector('#bkTxt').value);
               const qs = Array.isArray(d) ? d : d.quests; if (!Array.isArray(qs)) throw 0;
+              if (d.layouts && typeof d.layouts === 'object') { OVR = d.layouts; saveOVR(); }
               const L2 = loadLib();
               qs.forEach(q => { if (!q || !q.name || !Array.isArray(q.stages)) return; const i = L2.findIndex(x => x.name === q.name); if (i >= 0) L2[i] = q; else L2.push(q); });
               if (saveLib(L2)) { toast(`${qs.length}件のクエストを読み込みました`, 2500); stageSheet(); }
@@ -1884,11 +1898,16 @@
   }
   function exitCourse() { courseOn = false; saveCourse(); document.body.classList.remove('course'); cpSel = null; setMode('ball'); }
   const coursePhases = () => { const cs = courseStage(); return cs ? ((LAYOUT[cs.c.id] || [])[curCourse.s] || []) : []; };
+  // user-edited layouts (✎ 編集), per course / "stage-phase"
+  let OVR = {}; try { OVR = JSON.parse(localStorage.getItem('monst-layout-v1') || '{}'); } catch (e) {}
+  const saveOVR = () => { try { localStorage.setItem('monst-layout-v1', JSON.stringify(OVR)); } catch (e) {} };
+  const ovrKey = () => `${curCourse.s}-${curCourse.p || 0}`;
   function applyLayout() {   // put the stage's enemies and mines on the field
-    const P = coursePhases(), ph = P[Math.min(curCourse.p || 0, P.length - 1)];
+    const P = coursePhases(), ph0 = P[Math.min(curCourse.p || 0, P.length - 1)];
+    const ph = ((OVR[curCourse.c] || {})[ovrKey()]) || ph0;
     const f = S.field, W = f.r - f.l, H = f.b - f.t;
     S.blocks = [];
-    S.enemies = ph ? ph.e.map(([k, x, y, R]) => ({x: f.l + x * W, y: f.t + y * H, R: R * W, g: null, role: k === '本' ? 'book' : null, k})) : [];
+    S.enemies = ph ? ph.e.map(([k, x, y, R, bk]) => ({x: f.l + x * W, y: f.t + y * H, R: R * W, g: null, role: (bk || k === '本') ? 'book' : null, k})) : [];
     S.mines = ph ? ph.m.map(([x, y]) => ({x: f.l + x * W, y: f.t + y * H})) : [];
     persist();
   }
@@ -1943,6 +1962,48 @@
       <div class="small">${cs.c.common.map(t => '・' + esc(t)).join('<br>')}</div><button id="closeS">閉じる</button>`, sh => sh.querySelector('#closeS').onclick = closeSheet);
   }
   $('cpExit').onclick = exitCourse;
+  // ======== ✎ 編集: the stage's reference screenshot with its layout, edited with the ② 配置 tools ========
+  let ceSave = null;
+  const ENAMES = ['本', '騎', 'ミ', '魔', 'ゴ', '天', 'ボ', 'ド', '敵'];
+  function enterEdit() {
+    const cs = courseStage(), P = coursePhases(), ph = P[curCourse.p || 0];
+    if (!cs || !ph) { toast('このステージには編集できる配置がありません', 2500); return; }
+    const im = new Image();
+    im.onload = () => {
+      ceSave = {img, IW, IH, R: toRatio()};
+      img = im; IW = im.naturalWidth; IH = im.naturalHeight; labelCache = null;
+      fitField(); applyLayout(); ballZoom = null;
+      document.body.classList.remove('course'); document.body.classList.add('cedit');
+      $('ceTitle').textContent = `✎ ${cs.c.name} ${cs.st.n}${ph.n ? '・' + ph.n : ''}${(OVR[curCourse.c] || {})[ovrKey()] ? '（編集済み）' : ''}`;
+      setMode('place'); layout(); draw();
+    };
+    im.onerror = () => toast('画像を読み込めませんでした', 2500);
+    im.src = `course/map/${ph.id}.jpg`;
+  }
+  function exitEdit(save) {
+    if (save) {
+      const f = S.field, W = f.r - f.l, H = f.b - f.t, r4 = v => Math.round(v * 1e4) / 1e4;
+      (OVR[curCourse.c] = OVR[curCourse.c] || {})[ovrKey()] = {
+        e: S.enemies.map(e => [e.k || (e.role === 'book' ? '本' : '敵'), r4((e.x - f.l) / W), r4((e.y - f.t) / H), r4(e.R / W), e.role === 'book' ? 1 : 0]),
+        m: S.mines.map(m => [r4((m.x - f.l) / W), r4((m.y - f.t) / H)])};
+      saveOVR(); toast('保存しました。このステージ・段階ではこの配置を使います', 2500);
+    }
+    if (ceSave) { img = ceSave.img; IW = ceSave.IW; IH = ceSave.IH; labelCache = null; fromRatio(ceSave.R); if (img) fitField(); ceSave = null; }
+    document.body.classList.remove('cedit'); document.body.classList.add('course');
+    selEnemy = -1; applyLayout(); cpSel = null; setMode('course'); layout(); draw();
+  }
+  $('cpEdit').onclick = enterEdit;
+  $('ceDone').onclick = () => exitEdit(true);
+  $('ceCancel').onclick = () => exitEdit(false);
+  $('ceReset').onclick = () => {
+    if (OVR[curCourse.c]) delete OVR[curCourse.c][ovrKey()];
+    saveOVR(); applyLayout(); selEnemy = -1; syncUI(); draw(); toast('初期配置に戻しました', 2000);
+  };
+  $('ceName').onclick = () => {
+    const e = S.enemies[selEnemy]; if (!e) { toast('先に敵をタップして選んでください', 1800); return; }
+    const i = ENAMES.indexOf(e.k || '敵'); e.k = ENAMES[(i + 1) % ENAMES.length];
+    e.role = e.k === '本' ? 'book' : (e.role === 'book' ? null : e.role); syncUI(); draw();
+  };
   const cpBounce = d => { S.bounces = Math.max(1, Math.min(20, S.bounces + d)); persist(); syncUI(); renderCourse(); draw(); };
   $('cpBm').onclick = () => cpBounce(-1);
   $('cpBp').onclick = () => cpBounce(1);
