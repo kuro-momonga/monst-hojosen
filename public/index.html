@@ -192,7 +192,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.34';
+  const VERSION = '2.35';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -915,7 +915,7 @@
   }
 
   // ---- turn-order labels (1st/2nd/3rd/4th, optional in-game setting): red text with a white outline,
-  // drawn right above each ball. Ball centre = label bbox centre + 58.5px (of 1170) down. Measured on BlueStacks.
+  // drawn right above each ball. Ball centre = label bbox centre + 58.5px (of 1170) down. Checked on BlueStacks and iPhone recordings.
   let labelCache = null;
   function findLabelBalls() {
     if (!img) return [];
@@ -929,8 +929,8 @@
     const red = new Uint8Array(N), I = new Float32Array((w + 1) * (h + 1));
     for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) {
       const i = y * w + x, r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
-      if (r > 160 && gg < 100 && b < 110 && r - gg > 90) red[i] = 1;
-      row += (r > 215 && gg > 215 && b > 215) ? 1 : 0;
+      if (r > 150 && gg < 60 && b < 70 && r - gg > 90) red[i] = 1;      // saturated label red
+      row += (r > 150 && gg > 150 && b > 150) ? 1 : 0;                 // its (often tinted) white outline
       I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row;
     } }
     const rad = Math.max(2, Math.round(6 * u)), core = new Uint8Array(N);
@@ -954,7 +954,7 @@
         if (core[i]) { cnt++; if (x < xa) xa = x; if (x > xb) xb = x; if (y < ya) ya = y; if (y > yb) yb = y; }
         for (const j of [i - 1, i + 1, i - w, i + w]) if (j >= 0 && j < N && !seen[j] && dil[j] && Math.abs((j % w) - x) <= 1) { seen[j] = 1; st.push(j); }
       }
-      if (cnt < 80 * u * u) continue;
+      if (cnt < 400 * u * u) continue;   // hearts / single digits are smaller
       const lw = (xb - xa) / u, lh = (yb - ya) / u;
       if (lw < 55 || lw > 110 || lh < 28 || lh > 46) continue;
       out.push({x: x0 + (xa + xb) / 2, y: y0 + (ya + yb) / 2 + 58.5 * u});
