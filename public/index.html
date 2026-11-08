@@ -202,6 +202,7 @@
   <div id="menu">
     <button id="courseBtn">📚 コース</button>
     <button id="stages">📁 ステージ保存・読み込み</button>
+    <button id="watchBtn" style="display:none">🖥 スクショフォルダを自動で読む（PC）</button>
     <button id="dim">画面：通常</button>
     <button id="detect">敵・ブロックを自動検出</button>
     <button id="eClear" class="danger">敵とブロックを全部消す</button>
@@ -219,7 +220,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.49';
+  const VERSION = '2.50';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1880,6 +1881,61 @@
     });
   }
   $('stages').onclick = () => { closeMenu(); stageSheet(); };
+  // ======== PC: watch the screenshot folder and load the newest image automatically ========
+  // (Chrome / Edge: File System Access API. The folder handle is kept in IndexedDB.)
+  let watchDir = null, watchLast = 0, watchTimer = null;
+  const IMG_RE = /\.(png|jpe?g|webp|bmp)$/i;
+  async function idbPut(k, v) { try { const db = await idb(); db.transaction('kv', 'readwrite').objectStore('kv').put(v, k); } catch (e) {} }
+  async function idbGet(k) { try { const db = await idb(); return await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => r(q.result); q.onerror = () => r(null); }); } catch (e) { return null; } }
+  async function newestIn(dir) {
+    let best = null;
+    for await (const h of dir.values()) {
+      if (h.kind !== 'file' || !IMG_RE.test(h.name)) continue;
+      const f = await h.getFile();
+      if (!best || f.lastModified > best.lastModified) best = f;
+    }
+    return best;
+  }
+  async function watchTick() {
+    if (!watchDir) return;
+    try {
+      const f = await newestIn(watchDir);
+      if (f && f.lastModified > watchLast) {
+        const first = watchLast === 0; watchLast = f.lastModified;
+        if (!first) { closeSheet(); loadFile(f); toast('新しいスクショを読み込みました', 1800); }
+      }
+    } catch (e) { stopWatch('フォルダを読めなくなりました'); }
+  }
+  function startWatch(dir, loadNow) {
+    watchDir = dir; watchLast = 0;
+    clearInterval(watchTimer); watchTimer = setInterval(watchTick, 1000);
+    newestIn(dir).then(f => { if (f) { watchLast = f.lastModified; if (loadNow) loadFile(f); } }).catch(() => {});
+    $('watchBtn').textContent = `🖥 自動読み込み中：${dir.name}（押すと止める）`;
+  }
+  function stopWatch(msg) {
+    watchDir = null; clearInterval(watchTimer); $('watchBtn').textContent = '🖥 スクショフォルダを自動で読む（PC）';
+    if (msg) toast(msg, 2500);
+  }
+  if ('showDirectoryPicker' in window) {
+    $('watchBtn').style.display = '';
+    $('watchBtn').onclick = async () => {
+      closeMenu();
+      if (watchDir) { stopWatch('自動読み込みを止めました'); idbPut('watchDir', null); return; }
+      try {
+        let dir = await idbGet('watchDir');
+        if (dir && (await dir.requestPermission({mode: 'read'})) !== 'granted') dir = null;
+        if (!dir) { dir = await window.showDirectoryPicker({id: 'monst-shots', mode: 'read'}); await idbPut('watchDir', dir); }
+        startWatch(dir, true);
+        toast(`「${dir.name}」の新しいスクショを自動で読み込みます`, 3000);
+      } catch (e) {}
+    };
+    // resume after reload when the permission is still granted (otherwise one click on the button)
+    idbGet('watchDir').then(async dir => {
+      if (!dir) return;
+      try { if ((await dir.queryPermission({mode: 'read'})) === 'granted') startWatch(dir, false);
+            else $('watchBtn').textContent = `🖥 ${dir.name} の自動読み込みを再開（押す）`; } catch (e) {}
+    });
+  }
 
   // ======== courses: per-stage notes + goal used by the route search ========
   // goal: mines = mines to pick before hitting ★, walls = distinct walls to touch before ★ (hit-charge wall),
