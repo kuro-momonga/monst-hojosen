@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.70';
+  const VERSION = '2.71';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1914,8 +1914,9 @@
   // ======== BlueStacks: local helper (helper/monst_helper.py) does adb swipe / screencap ========
   const BS = 'http://127.0.0.1:8765';
   const bsWander = () => { try { return localStorage.getItem('monst-bsWander') !== '0'; } catch (e) { return true; } };   // default ON
+  const bsMethod = () => { try { return localStorage.getItem('monst-bsMethod') || 'auto'; } catch (e) { return 'auto'; } };
   const bsMs = () => { let v = 1200; try { v = +localStorage.getItem('monst-bsMs') || 1200; } catch (e) {} return v; };
-  let bsOn = false, bsInfo = null;
+  let bsOn = false, bsInfo = null, bsLast = null;
   async function bsStatus(quiet) {
     try {
       const c = new AbortController(); setTimeout(() => c.abort(), 2500);
@@ -1938,13 +1939,14 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 14)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 15)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     toast(`🎯 ${displayAngle()}° で${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + 600);
     try {
-      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander()})});
+      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander(), method: bsMethod()})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
+      bsLast = {angle: +displayAngle(), how: j.how, from: j.from, to: j.to, dev_from: j.dev_from, dev_to: j.dev_to};
       if (j.notes && j.notes.length) { console.warn(j.notes); setTimeout(() => toast('⚠ ' + j.notes.join(' / ').slice(0, 160), 6000), 4200); }
-      toast(`🎯 ${displayAngle()}° で打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'sendevent' ? 'タッチ直接送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
+      toast(`🎯 ${displayAngle()}° で打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'sendevent' ? 'タッチ直接送信' : j.how === 'script' ? '1つずつ送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
     } catch (e) { toast('打てませんでした：' + e.message, 5000); bsStatus(true); }
   }
   document.querySelectorAll('.bsShot').forEach(b => b.onclick = bsCapture);
@@ -1970,14 +1972,19 @@
       <a href="helper/monst_helper.py" download><button style="width:100%">⬇ monst_helper.py</button></a>
       <a href="helper/start_helper.bat" download><button style="width:100%">⬇ start_helper.bat</button></a>
       <div class="row"><span class="small">引く速さ</span>${[[600, '速め'], [1200, 'ふつう'], [2000, 'ゆっくり'], [3000, 'かなりゆっくり']].map(([v, n]) => `<button data-ms="${v}" class="${bsMs() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
+      <div class="row"><span class="small">送り方</span>${[['auto', 'なめらか'], ['script', '1つずつ'], ['swipe', 'まっすぐ']].map(([v, n]) => `<button data-mt="${v}" class="${bsMethod() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="bsWd" ${bsWander() ? 'checked' : ''}>寄り道しながら引く（ランダムな方向を向いてから正しい角度へ）</label>
-      <div id="bsSt" class="small">${bsOn ? `接続中：${bsInfo.serial}（${bsInfo.w}×${bsInfo.h}）` : '未接続'}</div>
+      <div id="bsSt" class="small">${bsOn ? `接続中：${bsInfo.serial}（${bsInfo.w}×${bsInfo.h}）${bsInfo.touch ? `<br>タッチ：${esc(bsInfo.touch.name)} ${bsInfo.touch.dev} x${bsInfo.touch.x} y${bsInfo.touch.y}` : '<br>タッチ端末：見つからない'}${bsLast ? `<br>前回：${esc(JSON.stringify(bsLast))}` : ''}` : '未接続'}</div>
       <button id="bsChk" class="on">接続を確認</button><button id="closeS">閉じる</button>`, sh => {
       sh.querySelector('#bsChk').onclick = async () => {
         const ok = await bsStatus(false);
         sh.querySelector('#bsSt').textContent = ok ? `接続中：${bsInfo.serial}（${bsInfo.w}×${bsInfo.h}）` : '未接続';
         if (ok) toast('BlueStacksにつながりました', 2000);
       };
+      sh.querySelectorAll('[data-mt]').forEach(b => b.onclick = () => {
+        try { localStorage.setItem('monst-bsMethod', b.dataset.mt); } catch (e) {}
+        sh.querySelectorAll('[data-mt]').forEach(x => x.classList.toggle('on', x === b));
+      });
       sh.querySelector('#bsWd').onchange = e => { try { localStorage.setItem('monst-bsWander', e.target.checked ? '1' : '0'); } catch (er) {} };
       sh.querySelectorAll('[data-ms]').forEach(b => b.onclick = () => {
         try { localStorage.setItem('monst-bsMs', b.dataset.ms); } catch (e) {}

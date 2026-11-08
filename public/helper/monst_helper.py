@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 14
+HELPER_VER = 15
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -141,13 +141,18 @@ class Adb:
         how, errs = None, []
         if self.touch() and method != "swipe":
             try:
-                self.send_touch(sx, sy, path); how = "sendevent"
+                if method == "script":
+                    self.send_touch_script(sx, sy, path[::4] + [path[-1]]); how = "script"
+                else:
+                    self.send_touch(sx, sy, path); how = "sendevent"
             except Exception as e:
                 errs.append(f"sendevent: {e}")
         if how is None:
             self.run("shell", "input", "swipe", str(sx), str(sy), str(ex), str(ey), str(int(ms + hold)), timeout=30)
             how = "swipe"
-        return {"from": [sx, sy], "to": [ex, ey], "err_deg": round(err, 4), "how": how, "notes": errs}
+        conv = self.conv_fn() if self._touch else None
+        return {"from": [sx, sy], "to": [ex, ey], "err_deg": round(err, 4), "how": how, "notes": errs,
+                "dev_from": conv(sx, sy) if conv else None, "dev_to": conv(ex, ey) if conv else None}
 
     # ---- raw touch through the emulator's touchscreen device (sendevent): a real held drag ----
     def touch(self):
