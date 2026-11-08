@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 26
+HELPER_VER = 27
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -280,18 +280,18 @@ class Adb:
             p.stdin.write(b"".join(pk(*e) for e in evs)); p.stdin.flush()
         X, Y = conv(sx, sy)
         t0 = time.perf_counter(); due = 0.0
-        tid = self.new_tid(); send((3, 47, 0), (3, 57, tid), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
+        send(*self.E_down(X, Y))
         for x, y, wait in path:
             due += wait
             X, Y = conv(x, y)
-            send((3, 53, X), (3, 54, Y), (0, 0, 0))
+            send(*self.E_move(X, Y))
             sl = t0 + due - time.perf_counter()
             if sl > 0: time.sleep(sl)
         # end inside the same stream (so nothing can overtake it): exact aim point, hold, release
         ex_, ey_, _ = path[-1]; X, Y = conv(ex_, ey_)
-        send((3, 53, X), (3, 54, Y), (0, 0, 0)); time.sleep(.12)
-        send((3, 53, X), (3, 54, Y), (0, 0, 0)); time.sleep(.12)
-        send((3, 57, -1), (1, 330, 0), (0, 0, 0))
+        send(*self.E_move(X, Y)); time.sleep(.12)
+        send(*self.E_move(X, Y)); time.sleep(.12)
+        send(*self.E_up())
         self._sent_all = True
         for _ in range(4):          # harmless empty SYN reports: push the tail through any buffering
             send(*[(0, 0, 0)] * 100); time.sleep(.05)
@@ -306,11 +306,25 @@ class Adb:
         # the stream process is gone now, so nothing can overtake this: make sure the finger is lifted
         # at the exact aim point (the tail of the stream can get stuck in buffers and never arrive)
         ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
-        self.run("shell", "; ".join([ev(3, 47, 0), ev(3, 57, self.new_tid()), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0), "sleep 0.05",
-                                     ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0), "sleep 0.05",
-                                     ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]), timeout=15)
+        self.run("shell", "; ".join([ev(*e) for e in self.E_up()]), timeout=15)
         if any(k in err for k in ("nvalid", "denied", "not found", "rror")):
             raise RuntimeError(err[:200])
+
+    # ---- touch protocol: BlueStacks' virtual touch is multitouch protocol A (no tracking id / BTN_TOUCH):
+    #      each frame = X, Y, SYN_MT_REPORT, SYN_REPORT; lifting = an empty report (SYN_MT_REPORT, SYN_REPORT)
+    def protoB(self):
+        return bool(self._touch and self._touch.get("tid"))
+
+    def E_down(self, X, Y):
+        if self.protoB():
+            return [(3, 47, 0), (3, 57, self.new_tid()), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0)]
+        return [(3, 53, X), (3, 54, Y), (0, 2, 0), (0, 0, 0)]
+
+    def E_move(self, X, Y):
+        return [(3, 53, X), (3, 54, Y), (0, 0, 0)] if self.protoB() else [(3, 53, X), (3, 54, Y), (0, 2, 0), (0, 0, 0)]
+
+    def E_up(self):
+        return [(3, 57, -1), (1, 330, 0), (0, 0, 0)] if self.protoB() else [(0, 2, 0), (0, 0, 0)]
 
     def new_tid(self):
         # a new tracking id every gesture: the kernel drops a value equal to the current one, so reusing "1"
@@ -322,7 +336,7 @@ class Adb:
         """lift a finger left down by an earlier failed attempt"""
         try:
             d = self._touch["dev"]
-            self.run("shell", f"sendevent {d} 3 47 0; sendevent {d} 3 57 -1; sendevent {d} 1 330 0; sendevent {d} 0 0 0; true", timeout=10)
+            self.run("shell", "; ".join(f"sendevent {d} {a} {b} {c}" for a, b, c in self.E_up()) + "; true", timeout=10)
         except Exception:
             pass
 
@@ -350,14 +364,14 @@ class Adb:
             lines.append(f"dd if=/data/local/tmp/monst_touch.bin of={d} bs={es} skip={idx} count={len(evs)} 2>/dev/null")
             idx += len(evs)
         X, Y = conv(sx, sy)
-        frame((3, 47, 0), (3, 57, self.new_tid()), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
+        frame(*self.E_down(X, Y))
         for x, y, dt in frames:
             X, Y = conv(x, y)
-            frame((3, 53, X), (3, 54, Y), (0, 0, 0))
+            frame(*self.E_move(X, Y))
             wait += dt - .022
             if wait > .03:
                 lines.append(f"sleep {wait:.2f}"); wait = 0.0
-        frame((3, 57, -1), (1, 330, 0), (0, 0, 0))
+        frame(*self.E_up())
         files = []
         try:
             with tempfile.NamedTemporaryFile("wb", suffix=".bin", delete=False) as f:
@@ -376,15 +390,15 @@ class Adb:
         d = self._touch["dev"]; conv = self.conv_fn()
         ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
         X, Y = conv(sx, sy)
-        cmds = [ev(3, 47, 0), ev(3, 57, self.new_tid()), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0)]
+        cmds = [ev(*e) for e in self.E_down(X, Y)]
         pend = 0.0
         for x, y, p in path:
             X, Y = conv(x, y)
-            cmds += [ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0)]
+            cmds += [ev(*e) for e in self.E_move(X, Y)]
             pend += p - .015   # each sendevent line costs a little time itself
             if pend > .02:
                 cmds.append(f"sleep {pend:.2f}"); pend = 0.0
-        cmds += [ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]
+        cmds += [ev(*e) for e in self.E_up()]
         # a long drag is hundreds of commands: too long for one command line -> push a script file and run it
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, newline="\n") as f:
