@@ -216,7 +216,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.43';
+  const VERSION = '2.44';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -450,6 +450,12 @@
   }
   // same-type enemies share size and offset from their HP bar: change one, all of its kind follow
   function syncGroup(k) {
+    const e0 = S.enemies[k];
+    // course edit: same kind of enemy = same size (all stages of the course)
+    if (e0 && e0.k && e0.k !== '敵' && document.body.classList.contains('cedit')) {
+      S.enemies.forEach(o => { if (o.k === e0.k) o.R = e0.R; });
+      if (typeof setTypeSize === 'function') setTypeSize(e0.k, e0.R);
+    }
     const e = S.enemies[k]; if (!e || e.g == null || e.ax == null) return;
     const dx = e.x - e.ax, dy = e.y - e.ay;
     S.enemies.forEach(o => { if (o !== e && o.g === e.g && o.ax != null) { o.R = e.R; o.x = o.ax + dx; o.y = o.ay + dy; } });
@@ -1902,12 +1908,17 @@
   let OVR = {}; try { OVR = JSON.parse(localStorage.getItem('monst-layout-v1') || '{}'); } catch (e) {}
   const saveOVR = () => { try { localStorage.setItem('monst-layout-v1', JSON.stringify(OVR)); } catch (e) {} };
   const ovrKey = () => `${curCourse.s}-${curCourse.p || 0}`;
+  // size per enemy kind for the whole course (✎ 編集で1体変えると同じ種類が全部変わる)
+  let typeSizeDraft = null;
+  function setTypeSize(k, R) { const f = S.field; (typeSizeDraft = typeSizeDraft || {})[k] = Math.round(R / (f.r - f.l) * 1e4) / 1e4; }
+  const typeSizes = () => ({...((OVR[curCourse.c] || {}).sizes || {}), ...(typeSizeDraft || {})});
   function applyLayout() {   // put the stage's enemies and mines on the field
     const P = coursePhases(), ph0 = P[Math.min(curCourse.p || 0, P.length - 1)];
     const ph = ((OVR[curCourse.c] || {})[ovrKey()]) || ph0;
     const f = S.field, W = f.r - f.l, H = f.b - f.t;
     S.blocks = [];
-    S.enemies = ph ? ph.e.map(([k, x, y, R, bk]) => ({x: f.l + x * W, y: f.t + y * H, R: R * W, g: null, role: (bk || k === '本') ? 'book' : null, k})) : [];
+    const TS = typeSizes();
+    S.enemies = ph ? ph.e.map(([k, x, y, R, bk]) => ({x: f.l + x * W, y: f.t + y * H, R: (TS[k] || R) * W, g: null, role: (bk || k === '本') ? 'book' : null, k})) : [];
     S.mines = ph ? ph.m.map(([x, y]) => ({x: f.l + x * W, y: f.t + y * H})) : [];
     persist();
   }
@@ -1986,8 +1997,10 @@
       (OVR[curCourse.c] = OVR[curCourse.c] || {})[ovrKey()] = {
         e: S.enemies.map(e => [e.k || (e.role === 'book' ? '本' : '敵'), r4((e.x - f.l) / W), r4((e.y - f.t) / H), r4(e.R / W), e.role === 'book' ? 1 : 0]),
         m: S.mines.map(m => [r4((m.x - f.l) / W), r4((m.y - f.t) / H)])};
+      if (typeSizeDraft) OVR[curCourse.c].sizes = {...(OVR[curCourse.c].sizes || {}), ...typeSizeDraft};
       saveOVR(); toast('保存しました。このステージ・段階ではこの配置を使います', 2500);
     }
+    typeSizeDraft = null;
     if (ceSave) { img = ceSave.img; IW = ceSave.IW; IH = ceSave.IH; labelCache = null; fromRatio(ceSave.R); if (img) fitField(); ceSave = null; }
     document.body.classList.remove('cedit'); document.body.classList.add('course');
     selEnemy = -1; applyLayout(); cpSel = null; setMode('course'); layout(); draw();
@@ -1996,7 +2009,8 @@
   $('ceDone').onclick = () => exitEdit(true);
   $('ceCancel').onclick = () => exitEdit(false);
   $('ceReset').onclick = () => {
-    if (OVR[curCourse.c]) delete OVR[curCourse.c][ovrKey()];
+    if (OVR[curCourse.c]) { delete OVR[curCourse.c][ovrKey()]; delete OVR[curCourse.c].sizes; }
+    typeSizeDraft = null;
     saveOVR(); applyLayout(); selEnemy = -1; syncUI(); draw(); toast('初期配置に戻しました', 2000);
   };
   $('ceName').onclick = () => {
