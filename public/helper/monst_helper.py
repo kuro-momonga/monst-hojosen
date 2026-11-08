@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 12
+HELPER_VER = 13
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -220,19 +220,18 @@ class Adb:
             send((3, 53, X), (3, 54, Y), (0, 0, 0))
             sl = t0 + due - time.perf_counter()
             if sl > 0: time.sleep(sl)
+        # end inside the same stream (so nothing can overtake it): exact aim point, hold, release
+        ex_, ey_, _ = path[-1]; X, Y = conv(ex_, ey_)
+        send((3, 53, X), (3, 54, Y), (0, 0, 0)); time.sleep(.12)
+        send((3, 53, X), (3, 54, Y), (0, 0, 0)); time.sleep(.12)
+        send((3, 57, -1), (1, 330, 0), (0, 0, 0))
+        self._sent_all = True
+        time.sleep(1.0)            # let adb deliver the tail before closing (closing early dropped the release)
         p.stdin.close()
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
             p.kill()
-        err = (p.stderr.read() or b"").decode(errors="ignore")
-        if p.returncode not in (0, None) or "denied" in err.lower() or "rror" in err:
-            raise RuntimeError(err.strip()[:200] or f"exit {p.returncode}")
-        # the end is sent with sendevent (known to work): exact release point, short hold, release
-        self._sent_all = True
-        ex_, ey_, _ = path[-1]; X, Y = conv(ex_, ey_)
-        ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
-        self.run("shell", "; ".join([ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0), "sleep 0.15", ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0), "sleep 0.1", ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]), timeout=15)
 
     def send_touch_script(self, sx, sy, path):
         t = self._touch; w, h = self.size; d = t["dev"]
