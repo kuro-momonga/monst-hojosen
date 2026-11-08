@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 15
+HELPER_VER = 16
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -54,8 +54,25 @@ class Adb:
         # "Physical size: 1080x1920" (+ maybe "Override size: ...")
         sizes = [l.split(":")[1].strip() for l in out.splitlines() if "size" in l]
         w, h = map(int, sizes[-1].split("x"))
-        self.size = (w, h)
+        self.natural = (w, h)            # size in the panel's natural orientation (touch coordinates follow this)
+        self.rot = self.rotation()
+        self.size = (h, w) if self.rot in (1, 3) else (w, h)   # what the app actually sees (input swipe / screenshots)
         return self.size
+
+    def rotation(self):
+        for cmd in (["dumpsys", "input"], ["dumpsys", "window", "displays"]):
+            try:
+                out = self.run("shell", *cmd, timeout=10)
+            except Exception:
+                continue
+            for key in ("SurfaceOrientation:", "mCurrentRotation=", "mRotation=", "rotation="):
+                i = out.find(key)
+                if i >= 0:
+                    v = out[i + len(key):i + len(key) + 12].strip().split()[0].strip(",")
+                    v = {"ROTATION_0": "0", "ROTATION_90": "1", "ROTATION_180": "2", "ROTATION_270": "3"}.get(v, v)
+                    if v.isdigit():
+                        return int(v) % 4
+        return 0
 
     def screencap(self):
         data = self.run("exec-out", "screencap", "-p", binary=True)
@@ -195,14 +212,16 @@ class Adb:
             return self.send_touch_script(sx, sy, path)
 
     def conv_fn(self):
-        t = self._touch; w, h = self.size
+        """screen (rotated, what the app sees) -> raw touch panel coordinates (natural orientation)"""
+        t = self._touch; Wn, Hn = self.natural; r = getattr(self, "rot_override", None)
+        r = self.rot if r is None else r
         (x0, x1), (y0, y1) = t["x"], t["y"]
-        swap = (x1 - x0 > y1 - y0) != (w > h)
         def conv(x, y):
-            if swap:
-                x, y = y, w - x
-                return round(x0 + x / (h - 1) * (x1 - x0)), round(y0 + y / (w - 1) * (y1 - y0))
-            return round(x0 + x / (w - 1) * (x1 - x0)), round(y0 + y / (h - 1) * (y1 - y0))
+            if r == 1:   nx, ny = Wn - y, x
+            elif r == 2: nx, ny = Wn - x, Hn - y
+            elif r == 3: nx, ny = y, Hn - x
+            else:        nx, ny = x, y
+            return round(x0 + nx / (Wn - 1) * (x1 - x0)), round(y0 + ny / (Hn - 1) * (y1 - y0))
         return conv
 
     def send_touch_stream(self, sx, sy, path):
@@ -248,14 +267,7 @@ class Adb:
             raise RuntimeError(err[:200])
 
     def send_touch_script(self, sx, sy, path):
-        t = self._touch; w, h = self.size; d = t["dev"]
-        (x0, x1), (y0, y1) = t["x"], t["y"]
-        swap = (x1 - x0 > y1 - y0) != (w > h)   # touch panel in the other orientation
-        def conv(x, y):
-            if swap:
-                x, y = y, w - x
-                return round(x0 + x / (h - 1) * (x1 - x0)), round(y0 + y / (w - 1) * (y1 - y0))
-            return round(x0 + x / (w - 1) * (x1 - x0)), round(y0 + y / (h - 1) * (y1 - y0))
+        d = self._touch["dev"]; conv = self.conv_fn()
         ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
         X, Y = conv(sx, sy)
         cmds = [ev(3, 57, 1), ev(3, 53, X), ev(3, 54, Y), ev(1, 330, 1), ev(0, 0, 0)]
@@ -307,7 +319,7 @@ def make_handler(adb):
             try:
                 if self.path.startswith("/status"):
                     w, h = adb.connect()
-                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch()})
+                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch(), "rot": adb.rot, "natural": adb.natural})
                 if self.path.startswith("/screen"):
                     if not adb.size:
                         adb.connect()
@@ -323,6 +335,7 @@ def make_handler(adb):
                 if self.path.startswith("/shoot"):
                     if not adb.size:
                         adb.connect()
+                    adb.rot_override = q.get("rot")
                     w, h = adb.size
                     cx = q.get("cx", w / 2)
                     cy = q.get("cy", h * .45)
