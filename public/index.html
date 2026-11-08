@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.79';
+  const VERSION = '2.80';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1944,14 +1944,14 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 22)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 23)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     toast(`🎯 ${displayAngle()}° で${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + 600);
     try {
       const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander(), method: bsMethod(), rot: bsRot()})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
       bsLast = {angle: +displayAngle(), how: j.how, from: j.from, to: j.to, dev_from: j.dev_from, dev_to: j.dev_to};
       if (j.notes && j.notes.length) { console.warn(j.notes); setTimeout(() => toast('⚠ ' + j.notes.join(' / ').slice(0, 160), 6000), 4200); }
-      toast(`🎯 ${displayAngle()}° で打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'sendevent' ? 'タッチ直接送信' : j.how === 'script' ? '1つずつ送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
+      toast(`🎯 ${displayAngle()}° で打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'frames' ? 'コマ送り' : j.how === 'sendevent' ? '流し込み' : j.how === 'script' ? '1つずつ送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
     } catch (e) { toast('打てませんでした：' + e.message, 5000); bsStatus(true); }
   }
   document.querySelectorAll('.bsShot').forEach(b => b.onclick = bsCapture);
@@ -1977,7 +1977,7 @@
       <a href="helper/monst_helper.py?v=${VERSION}" download="monst_helper.py"><button style="width:100%">⬇ monst_helper.py</button></a>
       <a href="helper/start_helper.bat?v=${VERSION}" download="start_helper.bat"><button style="width:100%">⬇ start_helper.bat</button></a>
       <div class="row"><span class="small">引く速さ</span>${[[600, '速め'], [1200, 'ふつう'], [2000, 'ゆっくり'], [3000, 'かなりゆっくり']].map(([v, n]) => `<button data-ms="${v}" class="${bsMs() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
-      <div class="row"><span class="small">送り方</span>${[['auto', 'なめらか'], ['script', '1つずつ'], ['swipe', 'まっすぐ']].map(([v, n]) => `<button data-mt="${v}" class="${bsMethod() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
+      <div class="row"><span class="small">送り方</span>${[['auto', 'なめらか'], ['stream', '流し込み（試験）'], ['script', '1つずつ'], ['swipe', 'まっすぐ']].map(([v, n]) => `<button data-mt="${v}" class="${bsMethod() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="bsFlip" ${(() => { try { return localStorage.getItem('monst-bsRot') === 'flip'; } catch (e) { return false; } })() ? 'checked' : ''}>タッチの向きを逆にする（なめらか・1つずつで真逆に飛ぶとき）</label>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="bsWd" ${bsWander() ? 'checked' : ''}>寄り道しながら引く（ランダムな方向を向いてから正しい角度へ）</label>
       <div id="bsSt" class="small">${bsOn ? `接続中：${bsInfo.serial}（${bsInfo.w}×${bsInfo.h}）${bsInfo.touch ? `<br>タッチ：${esc(bsInfo.touch.name)} ${bsInfo.touch.dev} x${bsInfo.touch.x} y${bsInfo.touch.y} 回転${bsInfo.rot}` : '<br>タッチ端末：見つからない'}${bsLast ? `<br>前回：${esc(JSON.stringify(bsLast))}` : ''}` : '未接続'}</div>

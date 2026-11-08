@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 22
+HELPER_VER = 23
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -171,7 +171,7 @@ class Adb:
         how, errs = None, []
         # debug: record what the kernel really receives on the touch device during the shot
         mon = None
-        if self.touch():
+        if self.touch() and os.environ.get("MONST_DEBUG"):
             try:   # record on the emulator itself (no adb buffering), read it back afterwards
                 self.run("shell", f"pkill -f 'getevent -lt' ; (getevent -lt {self._touch['dev']} > /data/local/tmp/monst_ge.txt 2>&1 &) ; sleep 0.3; true", timeout=10)
                 mon = True
@@ -181,8 +181,10 @@ class Adb:
             try:
                 if method == "script":
                     self.send_touch_script(sx, sy, path[::4] + [path[-1]]); how = "script"
-                else:
+                elif method == "stream":
                     self.send_touch(sx, sy, path); how = "sendevent"
+                else:
+                    self.send_touch_frames(sx, sy, path); how = "frames"
             except Exception as e:
                 errs.append(f"sendevent: {e}")
         if how is None:
@@ -306,6 +308,52 @@ class Adb:
                                      ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]), timeout=15)
         if any(k in err for k in ("nvalid", "denied", "not found", "rror")):
             raise RuntimeError(err[:200])
+
+    def send_touch_frames(self, sx, sy, path):
+        """All touch events go into one binary file on the emulator; a script writes them frame by frame
+        with dd (one process per frame instead of three sendevent calls) -> smooth enough, and the release
+        is in the same ordered script, so it always arrives."""
+        import tempfile
+        if not hasattr(self, "_evsize"):
+            abi = self.run("shell", "getprop ro.product.cpu.abi; true").strip()
+            self._evsize = 24 if "64" in abi else 16
+        es = self._evsize; fmt = "<qqHHi" if es == 24 else "<iiHHi"
+        pk = lambda a, b, c: struct.pack(fmt, 0, 0, a, b, c)
+        conv = self.conv_fn(); d = self._touch["dev"]
+        # resample the path to ~22 ms frames (a dd call takes about that long itself)
+        frames, acc, wait = [], 0.0, 0.0
+        for i, (x, y, dt) in enumerate(path):
+            acc += dt
+            if acc >= .022 or i == len(path) - 1:
+                frames.append((x, y, acc)); acc = 0.0
+        blob, lines, idx = bytearray(), [], 0
+        def frame(*evs):
+            nonlocal idx
+            for e in evs: blob.extend(pk(*e))
+            lines.append(f"dd if=/data/local/tmp/monst_touch.bin of={d} bs={es} skip={idx} count={len(evs)} 2>/dev/null")
+            idx += len(evs)
+        X, Y = conv(sx, sy)
+        frame((3, 57, 1), (3, 53, X), (3, 54, Y), (1, 330, 1), (0, 0, 0))
+        for x, y, dt in frames:
+            X, Y = conv(x, y)
+            frame((3, 53, X), (3, 54, Y), (0, 0, 0))
+            wait += dt - .022
+            if wait > .03:
+                lines.append(f"sleep {wait:.2f}"); wait = 0.0
+        frame((3, 57, -1), (1, 330, 0), (0, 0, 0))
+        files = []
+        try:
+            with tempfile.NamedTemporaryFile("wb", suffix=".bin", delete=False) as f:
+                f.write(bytes(blob)); files.append(f.name)
+            with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, newline="\n") as f:
+                f.write("\n".join(lines) + "\n"); files.append(f.name)
+            self.run("push", files[0], "/data/local/tmp/monst_touch.bin", timeout=20)
+            self.run("push", files[1], "/data/local/tmp/monst_touch.sh", timeout=20)
+        finally:
+            for f in files: os.unlink(f)
+        out = self.run("shell", "sh /data/local/tmp/monst_touch.sh; true", timeout=60)
+        if "denied" in out.lower() or "not found" in out:
+            raise RuntimeError(out.strip()[:200])
 
     def send_touch_script(self, sx, sy, path):
         d = self._touch["dev"]; conv = self.conv_fn()
