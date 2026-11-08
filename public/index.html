@@ -20,6 +20,7 @@
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:14px}
   body{display:flex;flex-direction:column;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+  @media (min-aspect-ratio: 3/4){body{max-width:min(100vw,calc(100vh*.62));margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line)}}
   #stage{flex:1;position:relative;min-height:0;margin-top:env(safe-area-inset-top)}
   canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
   #hint{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(0,0,0,.6);
@@ -191,7 +192,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.31';
+  const VERSION = '2.32';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -527,7 +528,23 @@
     if (saved && saved.r && (Math.abs(saved.r - 80 / 1170) < .002 || Math.abs(saved.r - 35 / 1170) < .002)) delete saved.r;   // old visual size -> measured hit radius
     if (saved) fromRatio(saved);
   } catch (e) {}
-  const persist = () => { try { localStorage.setItem('monst-guide-v3', JSON.stringify(toRatio())); } catch (e) {} };
+  // frame per screen shape (iPhone / BlueStacks / Android ...). Remembered once adjusted.
+  const FIELD_KEY = 'monst-fields-v1';
+  const aspKey = () => (IH / IW).toFixed(2);
+  let FIELDS = {}; try { FIELDS = JSON.parse(localStorage.getItem(FIELD_KEY) || '{}'); } catch (e) {}
+  function fitField() {   // returns 'saved' | 'iphone' | 'guess'
+    const k = aspKey(), f = FIELDS[k];
+    if (f) { S.field = {l: f.l * IW, t: f.t * IH, r: f.r * IW, b: f.b * IH}; return 'saved'; }
+    if (Math.abs(IH / IW - 2532 / 1170) < .04) { S.field = {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH}; return 'iphone'; }
+    // other shape: keep the width-based size, split the spare height like the iPhone layout (468 : 828)
+    const u = IW / 1170, fh = 1236 * u, top = Math.max(0, (IH - fh) * 468 / 1296);
+    S.field = {l: 40 * u, r: 1129 * u, t: top, b: top + fh};
+    return 'guess';
+  }
+  const persist = () => { try {
+    localStorage.setItem('monst-guide-v3', JSON.stringify(toRatio()));
+    if (img) { FIELDS[aspKey()] = toRatio().field; localStorage.setItem(FIELD_KEY, JSON.stringify(FIELDS)); }
+  } catch (e) {} };
 
   // ---- view transform ----
   let scale = 1, ox = 0, oy = 0, dpr = 1;
@@ -1515,7 +1532,7 @@
       if (!blob) return;
       const im = new Image();
       im.onload = () => {
-        const R = toRatio(); img = im; IW = im.naturalWidth; IH = im.naturalHeight; fromRatio(R);
+        const R = toRatio(); img = im; IW = im.naturalWidth; IH = im.naturalHeight; fromRatio(R); fitField();
         $('radius').max = Math.round(IW / 6);
         setMode(courseOn ? 'course' : savedStep);
       };
@@ -1531,7 +1548,10 @@
     im.onload = () => {
       const R = toRatio();               // frame & placements are kept as ratios of the screen size
       img = im; IW = im.naturalWidth; IH = im.naturalHeight;
+      const newShape = !FIELDS[aspKey()];
       fromRatio(R);
+      const fk = fitField();
+      if (newShape && fk === 'guess') setTimeout(() => toast('はじめての画面サイズです。枠を推定したので、ずれていたら ⋯ →「枠を調整する」で合わせてください（次からは覚えます）', 5000), 400);
       $('radius').max = Math.round(IW / 6);
       S.pins = []; tipD = null;
       if (courseOn) { S.enemies = []; S.blocks = []; S.mines = []; persist(); cpSel = null; setMode('course'); toast('キャラの真ん中をタップして玉を置いてください', 2500); return; }
@@ -1554,6 +1574,20 @@
   $('file').onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; };
   window.addEventListener('dragover', e => e.preventDefault());
   window.addEventListener('drop', e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); });
+  // PC: Ctrl+V a screenshot (e.g. Win+Shift+S of BlueStacks, or BlueStacks' screenshot)
+  window.addEventListener('paste', e => {
+    const it = [...(e.clipboardData && e.clipboardData.items || [])].find(i => i.type.startsWith('image/'));
+    if (it) { e.preventDefault(); loadFile(it.getAsFile()); }
+  });
+  // PC keys: ←→ angle 0.1° (Shift 1°), ↑↓ bounces, Enter = next step
+  window.addEventListener('keydown', e => {
+    if (e.target.closest && e.target.closest('input,textarea')) return;
+    if (mode !== 'aim' && mode !== 'course') return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { S.angle += (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 1 : .1); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { S.bounces = Math.max(1, Math.min(20, S.bounces + (e.key === 'ArrowUp' ? 1 : -1))); }
+    else return;
+    e.preventDefault(); persist(); syncUI(); draw();
+  });
 
   // ---- stage library (quest -> stages). Saves frame, blocks, enemies (not the ball) ----
   const LIB_KEY = 'monst-stages-v1';
