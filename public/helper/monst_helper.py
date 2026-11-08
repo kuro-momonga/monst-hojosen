@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 33
+HELPER_VER = 34
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -166,13 +166,19 @@ class Adb:
             ph = [random.uniform(0, 6.3) for _ in range(6)]
             t, out = 0.0, []
             fade_from = len(path) - 15
+            # noise mostly while moving: gain follows the (smoothed) finger speed, plus random calm spells with none
+            gs, calm_until, px_, py_ = 0.0, -1.0, path[0][0], path[0][1]
             for idx, (x, y, dt) in enumerate(path):
                 t += dt
-                g = 0 if idx >= fade_from else 1
+                v = math.hypot(x - px_, y - py_) / max(dt, 1e-3); px_, py_ = x, y
+                gs += (min(1.0, v / 900) - gs) * min(1.0, dt / .08)
+                if t > calm_until and random.random() < dt * .8:   # about once a second: a still, clean moment
+                    calm_until = t + random.uniform(.25, .9)
+                g = 0 if idx >= fade_from or t < calm_until else gs
                 nx = a1 * math.sin(2 * math.pi * f1 * t + ph[0]) + a2 * math.sin(2 * math.pi * f2 * t + ph[1]) + a3 * math.sin(2 * math.pi * f3 * t + ph[4]) + random.gauss(0, 1.0)
                 ny = a1 * math.sin(2 * math.pi * f1 * t + ph[2]) + a2 * math.sin(2 * math.pi * f2 * t + ph[3]) + a3 * math.sin(2 * math.pi * f3 * t + ph[5]) + random.gauss(0, 1.0)
                 dt2 = dt * random.uniform(.75, 1.25)
-                if g and random.random() < .004:
+                if g > .3 and random.random() < .004:
                     dt2 += random.uniform(.05, .2)   # tiny hesitation
                 out.append((min(w - 5, max(5, x + g * nx)), min(h - 5, max(5, y + g * ny)), dt2))
             path = out
