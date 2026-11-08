@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.56';
+  const VERSION = '2.57';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1913,6 +1913,7 @@
   $('stages').onclick = () => { closeMenu(); stageSheet(); };
   // ======== BlueStacks: local helper (helper/monst_helper.py) does adb swipe / screencap ========
   const BS = 'http://127.0.0.1:8765';
+  const bsMs = () => { let v = 1200; try { v = +localStorage.getItem('monst-bsMs') || 1200; } catch (e) {} return v; };
   let bsOn = false, bsInfo = null;
   async function bsStatus(quiet) {
     try {
@@ -1936,8 +1937,10 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
+    if (bsInfo && !(bsInfo.ver >= 2)) toast('ヘルパーが古いのでゆっくり引けません。monst_helper.py をダウンロードし直してください', 4000);
+    toast(`🎯 ${displayAngle()}° でゆっくり引いています…`, bsMs() + 600);
     try {
-      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle})});
+      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
       toast(`🎯 ${displayAngle()}° で打ちました`, 2000);
     } catch (e) { toast('打てませんでした：' + e.message, 3000); bsStatus(true); }
@@ -1964,6 +1967,7 @@
       ③「接続を確認」を押す。つながると「📸 BS」「🎯 打つ」ボタンが出ます</div>
       <a href="helper/monst_helper.py" download><button style="width:100%">⬇ monst_helper.py</button></a>
       <a href="helper/start_helper.bat" download><button style="width:100%">⬇ start_helper.bat</button></a>
+      <div class="row"><span class="small">引く速さ</span>${[[600, '速め'], [1200, 'ふつう'], [2000, 'ゆっくり'], [3000, 'かなりゆっくり']].map(([v, n]) => `<button data-ms="${v}" class="${bsMs() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
       <div id="bsSt" class="small">${bsOn ? `接続中：${bsInfo.serial}（${bsInfo.w}×${bsInfo.h}）` : '未接続'}</div>
       <button id="bsChk" class="on">接続を確認</button><button id="closeS">閉じる</button>`, sh => {
       sh.querySelector('#bsChk').onclick = async () => {
@@ -1971,6 +1975,10 @@
         sh.querySelector('#bsSt').textContent = ok ? `接続中：${bsInfo.serial}（${bsInfo.w}×${bsInfo.h}）` : '未接続';
         if (ok) toast('BlueStacksにつながりました', 2000);
       };
+      sh.querySelectorAll('[data-ms]').forEach(b => b.onclick = () => {
+        try { localStorage.setItem('monst-bsMs', b.dataset.ms); } catch (e) {}
+        sh.querySelectorAll('[data-ms]').forEach(x => x.classList.toggle('on', x === b));
+      });
       sh.querySelector('#closeS').onclick = closeSheet;
     });
   };

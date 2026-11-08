@@ -17,6 +17,7 @@ import argparse, json, math, os, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
+HELPER_VER = 2
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -62,7 +63,7 @@ class Adb:
             data = data.replace(b"\r\n", b"\n")
         return data
 
-    def shoot(self, angle_deg, cx, cy, ms):
+    def shoot(self, angle_deg, cx, cy, ms, hold=400):
         """Pull opposite to angle_deg (0 = right, clockwise +, screen y down) from (cx, cy).
         Picks the integer end point (pull length 0.3..0.42 of the width) whose direction is closest to the angle."""
         w, h = self.size
@@ -79,8 +80,26 @@ class Adb:
         if best is None:
             raise RuntimeError("引っ張る先が画面からはみ出します")
         err, ex, ey = best
-        self.run("shell", "input", "swipe", str(round(cx)), str(round(cy)), str(ex), str(ey), str(int(ms)))
-        return {"from": [round(cx), round(cy)], "to": [ex, ey], "err_deg": round(err, 4)}
+        sx, sy = round(cx), round(cy)
+        # slow pull: touch down, move in small steps over `ms`, hold still at the end, then release
+        # (each `input` call itself takes ~0.1-0.3 s on the emulator, so only a few steps)
+        steps = max(4, round(ms / 250))
+        cmds = [f"input motionevent DOWN {sx} {sy}"]
+        for i in range(1, steps + 1):
+            t = i / steps
+            t = t * t * (3 - 2 * t)  # ease in/out
+            cmds.append(f"input motionevent MOVE {round(sx + (ex - sx) * t)} {round(sy + (ey - sy) * t)}")
+        cmds += [f"input motionevent MOVE {ex} {ey}", f"sleep {hold / 1000:.3f}", f"input motionevent UP {ex} {ey}"]
+        try:
+            out = self.run("shell", "; ".join(cmds), timeout=30)
+            if "Error" in out or "Unknown" in out:
+                raise RuntimeError(out)
+            how = "motionevent"
+        except Exception:
+            # older Android: no motionevent -> a slow swipe
+            self.run("shell", "input", "swipe", str(sx), str(sy), str(ex), str(ey), str(int(ms + hold)), timeout=30)
+            how = "swipe"
+        return {"from": [sx, sy], "to": [ex, ey], "err_deg": round(err, 4), "how": how}
 
 
 def make_handler(adb):
@@ -110,7 +129,7 @@ def make_handler(adb):
             try:
                 if self.path.startswith("/status"):
                     w, h = adb.connect()
-                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial})
+                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER})
                 if self.path.startswith("/screen"):
                     if not adb.size:
                         adb.connect()
@@ -129,7 +148,7 @@ def make_handler(adb):
                     w, h = adb.size
                     cx = q.get("cx", w / 2)
                     cy = q.get("cy", h * .45)
-                    r = adb.shoot(float(q["angle"]), cx, cy, q.get("ms", 350))
+                    r = adb.shoot(float(q["angle"]), cx, cy, float(q.get("ms", 1200)), float(q.get("hold", 400)))
                     print(f"shoot {q['angle']:.2f}deg  {r}")
                     return self.reply(200, {"ok": True, **r})
                 return self.reply(404, {"ok": False, "error": "not found"})
