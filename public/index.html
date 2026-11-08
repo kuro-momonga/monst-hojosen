@@ -192,7 +192,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.33';
+  const VERSION = '2.34';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -914,6 +914,60 @@
     return best && best.s > .5 ? best : null;   // only a clearly visible ring
   }
 
+  // ---- turn-order labels (1st/2nd/3rd/4th, optional in-game setting): red text with a white outline,
+  // drawn right above each ball. Ball centre = label bbox centre + 58.5px (of 1170) down. Measured on BlueStacks.
+  let labelCache = null;
+  function findLabelBalls() {
+    if (!img) return [];
+    if (labelCache && labelCache.img === img) return labelCache.v;
+    const u = IW / 1170, f = S.field;
+    const x0 = Math.max(0, Math.round(f.l - 40 * u)), y0 = Math.max(0, Math.round(f.t - 80 * u));
+    const w = Math.min(IW, Math.round(f.r + 40 * u)) - x0, h = Math.min(IH, Math.round(f.b + 20 * u)) - y0;
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, N = w * h;
+    const red = new Uint8Array(N), I = new Float32Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) {
+      const i = y * w + x, r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
+      if (r > 160 && gg < 100 && b < 110 && r - gg > 90) red[i] = 1;
+      row += (r > 215 && gg > 215 && b > 215) ? 1 : 0;
+      I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row;
+    } }
+    const rad = Math.max(2, Math.round(6 * u)), core = new Uint8Array(N);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x; if (!red[i]) continue;
+      const xa = Math.max(0, x - rad), xb = Math.min(w, x + rad + 1), ya = Math.max(0, y - rad), yb = Math.min(h, y + rad + 1);
+      const sum = I[yb * (w + 1) + xb] - I[ya * (w + 1) + xb] - I[yb * (w + 1) + xa] + I[ya * (w + 1) + xa];
+      if (sum / ((xb - xa) * (yb - ya)) > .12) core[i] = 1;
+    }
+    // dilate (wide) so the glyphs of one label merge
+    const hx = Math.max(1, Math.round(8 * u)), hy = Math.max(1, Math.round(3 * u));
+    const t1 = new Uint8Array(N), dil = new Uint8Array(N);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (core[y * w + x]) for (let k = Math.max(0, x - hx); k <= Math.min(w - 1, x + hx); k++) t1[y * w + k] = 1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (t1[y * w + x]) for (let k = Math.max(0, y - hy); k <= Math.min(h - 1, y + hy); k++) dil[k * w + x] = 1;
+    const seen = new Uint8Array(N), out = [], st = [];
+    for (let s0 = 0; s0 < N; s0++) {
+      if (!dil[s0] || seen[s0]) continue;
+      let xa = 1e9, xb = -1, ya = 1e9, yb = -1, cnt = 0; st.push(s0); seen[s0] = 1;
+      while (st.length) {
+        const i = st.pop(), x = i % w, y = (i / w) | 0;
+        if (core[i]) { cnt++; if (x < xa) xa = x; if (x > xb) xb = x; if (y < ya) ya = y; if (y > yb) yb = y; }
+        for (const j of [i - 1, i + 1, i - w, i + w]) if (j >= 0 && j < N && !seen[j] && dil[j] && Math.abs((j % w) - x) <= 1) { seen[j] = 1; st.push(j); }
+      }
+      if (cnt < 80 * u * u) continue;
+      const lw = (xb - xa) / u, lh = (yb - ya) / u;
+      if (lw < 55 || lw > 110 || lh < 28 || lh > 46) continue;
+      out.push({x: x0 + (xa + xb) / 2, y: y0 + (ya + yb) / 2 + 58.5 * u});
+    }
+    labelCache = {img, v: out};
+    return out;
+  }
+  function nearLabelBall(tx, ty) {
+    const u = IW / 1170; let best = null, bd = 140 * u;
+    for (const b of findLabelBalls()) { const dd = Math.hypot(b.x - tx, b.y - ty); if (dd < bd) { bd = dd; best = b; } }
+    return best;
+  }
+
   // fallback: find the round character ball itself (strong circular edge, radius ~80-115px of 1170)
   function findBall(tx, tyy) {
     if (!img) return null;
@@ -1357,7 +1411,7 @@
     if (di.kind === 'ballRel' && Math.hypot(di.sx - di.sx0, di.sy - di.sy0) < 8) {
       const [ix, iy] = toI(di.sx0, di.sy0);
       // the turn ring changes size/colour or is absent: only snap when a clear ring is found
-      const r = ballZoom ? null : findRing(ix, iy);
+      const r = ballZoom ? null : (nearLabelBall(ix, iy) || findRing(ix, iy));
       if (r) { S.ball.x = r.x; S.ball.y = r.y; } else { S.ball.x = ix; S.ball.y = iy; }
       if (mode === 'course') { cpSel = null; clampBall(); persist(); dragInfo = null; renderCourse(); draw(); return; }
       if (!ballZoom) { ballZoom = [S.ball.x, S.ball.y]; clampBall(); persist(); dragInfo = null; layout(); syncZoom(); return; }
