@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 17
+HELPER_VER = 18
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -101,23 +101,36 @@ class Adb:
         # path: list of (x, y, wait_s). Touch down at (sx, sy), release at (ex, ey): only these two decide the shot.
         path = []
         if wander:
-            # 寄り道: random total time, a smooth curve (Catmull-Rom) through random points, speed varying along it
-            T = random.uniform(2, 4)
-            k = random.randint(3, 6)
-            P = [(sx, sy)] + [(random.uniform(.1, .9) * w, random.uniform(.15, .85) * h) for _ in range(k)] + [(ex, ey)]
-            P = [P[0]] + P + [P[-1]]
-            segs = len(P) - 3
-            wts = [random.uniform(.4, 1.6) for _ in range(segs)]; tot = sum(wts)
-            for j in range(segs):
-                p0, p1, p2, p3 = P[j], P[j + 1], P[j + 2], P[j + 3]
-                dur = T * wts[j] / tot
+            # human-like aiming: quick first pull roughly toward the aim, then a few corrections that get smaller
+            # (sometimes overshooting to the other side), sometimes one wide "look around", pauses to think,
+            # each movement with a bell-shaped (minimum-jerk) speed profile
+            base = math.atan2(ey - sy, ex - sx); L0 = math.hypot(ex - sx, ey - sy)
+            def at(ang, L):
+                return (min(w - 5, max(5, sx + math.cos(ang) * L)), min(h - 5, max(5, sy + math.sin(ang) * L)))
+            def move(a0, L0_, a1, L1, dur):
                 n = max(3, round(dur / .008))
                 for i in range(1, n + 1):
-                    u = i / n; u = u * u * (3 - 2 * u)   # slow down / speed up around each point
-                    u2, u3 = u * u, u * u * u
-                    x = .5 * (2 * p1[0] + (-p0[0] + p2[0]) * u + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * u2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * u3)
-                    y = .5 * (2 * p1[1] + (-p0[1] + p2[1]) * u + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * u2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * u3)
-                    path.append((min(w - 5, max(5, x)), min(h - 5, max(5, y)), dur / n))
+                    u = i / n; u = u ** 3 * (10 - 15 * u + 6 * u * u)       # minimum jerk
+                    path.append((*at(a0 + (a1 - a0) * u, L0_ + (L1 - L0_) * u), dur / n))
+            def pause(t):
+                path.append((*path[-1][:2], t)) if path else None
+            err = math.radians(random.uniform(25, 70)) * random.choice((1, -1))
+            ca, cL = base + err, L0 * random.uniform(.5, .9)
+            move(base + err * 1.3, L0 * .1, ca, cL, random.uniform(.18, .35))   # first pull
+            pause(random.uniform(.15, .5))
+            if random.random() < .45:   # look around once
+                la = base + math.radians(random.uniform(60, 170)) * random.choice((1, -1)); lL = L0 * random.uniform(.6, 1.1)
+                move(ca, cL, la, lL, random.uniform(.4, .8)); pause(random.uniform(.2, .6))
+                ca, cL = la, lL
+            for k in range(random.randint(3, 6)):
+                err *= -random.uniform(.25, .6) if random.random() < .5 else random.uniform(.25, .6)
+                na, nL = base + err, L0 * random.uniform(.85, 1.1)
+                d = abs((na - ca + math.pi) % (2 * math.pi) - math.pi)
+                move(ca, cL, ca + ((na - ca + math.pi) % (2 * math.pi) - math.pi), nL, .12 + d * random.uniform(.4, .9))
+                ca, cL = na, nL
+                pause(random.choice([random.uniform(.05, .2), random.uniform(.2, .6), random.uniform(.6, 1.1)]))
+            move(ca, cL, base, L0, random.uniform(.25, .5))
+            path.append((ex, ey, random.uniform(.1, .35)))
         else:
             n = max(6, round(ms / 1000 / .008))
             for i in range(1, n + 1):
