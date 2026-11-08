@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.77';
+  const VERSION = '2.78';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1974,8 +1974,8 @@
       ① BlueStacks の 設定 → 詳細設定 →「Android デバッグブリッジ（ADB）」をオン（ポート番号をメモ）<br>
       ② 下の2つを同じフォルダに保存して、start_helper.bat をダブルクリック（Python 3 が必要）<br>
       ③「接続を確認」を押す。つながると「📸 BS」「🎯 打つ」ボタンが出ます</div>
-      <a href="helper/monst_helper.py" download><button style="width:100%">⬇ monst_helper.py</button></a>
-      <a href="helper/start_helper.bat" download><button style="width:100%">⬇ start_helper.bat</button></a>
+      <a href="helper/monst_helper.py?v=${VERSION}" download="monst_helper.py"><button style="width:100%">⬇ monst_helper.py</button></a>
+      <a href="helper/start_helper.bat?v=${VERSION}" download="start_helper.bat"><button style="width:100%">⬇ start_helper.bat</button></a>
       <div class="row"><span class="small">引く速さ</span>${[[600, '速め'], [1200, 'ふつう'], [2000, 'ゆっくり'], [3000, 'かなりゆっくり']].map(([v, n]) => `<button data-ms="${v}" class="${bsMs() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
       <div class="row"><span class="small">送り方</span>${[['auto', 'なめらか'], ['script', '1つずつ'], ['swipe', 'まっすぐ']].map(([v, n]) => `<button data-mt="${v}" class="${bsMethod() === v ? 'on' : ''}">${n}</button>`).join('')}</div>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="bsFlip" ${(() => { try { return localStorage.getItem('monst-bsRot') === 'flip'; } catch (e) { return false; } })() ? 'checked' : ''}>タッチの向きを逆にする（なめらか・1つずつで真逆に飛ぶとき）</label>
