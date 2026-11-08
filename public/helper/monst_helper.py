@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 11
+HELPER_VER = 12
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -106,6 +106,36 @@ class Adb:
             for i in range(1, n + 1):
                 t = i / n; t = t * t * (3 - 2 * t)
                 path.append((sx + (ex - sx) * t, sy + (ey - sy) * t, ms / 1000 / n))
+        if wander:
+            # settle like a hand: overshoot a little, then 2-3 small corrections onto the aim
+            ox, oy = random.gauss(0, 9), random.gauss(0, 9)
+            for k in range(random.randint(2, 3)):
+                f = (.45 ** k) * random.choice((1, -1)) if k else 1
+                tx, ty = ex + ox * f, ey + oy * f
+                lx, ly = path[-1][0], path[-1][1]
+                n = random.randint(12, 30)
+                for i in range(1, n + 1):
+                    u = i / n; u = u * u * (3 - 2 * u)
+                    path.append((lx + (tx - lx) * u, ly + (ty - ly) * u, random.uniform(.006, .012)))
+            lx, ly = path[-1][0], path[-1][1]
+            for i in range(1, 16):
+                u = i / 15; path.append((lx + (ex - lx) * u, ly + (ey - ly) * u, .01))
+            # hand noise: tremor (8-12 Hz, ~2 px) + small random jitter + uneven frame timing + micro pauses
+            f1, f2 = random.uniform(8, 12), random.uniform(3, 6)
+            a1, a2 = random.uniform(1, 2.5), random.uniform(1, 3)
+            ph = [random.uniform(0, 6.3) for _ in range(4)]
+            t, out = 0.0, []
+            fade_from = len(path) - 15
+            for idx, (x, y, dt) in enumerate(path):
+                t += dt
+                g = 0 if idx >= fade_from else 1
+                nx = a1 * math.sin(2 * math.pi * f1 * t + ph[0]) + a2 * math.sin(2 * math.pi * f2 * t + ph[1]) + random.gauss(0, .6)
+                ny = a1 * math.sin(2 * math.pi * f1 * t + ph[2]) + a2 * math.sin(2 * math.pi * f2 * t + ph[3]) + random.gauss(0, .6)
+                dt2 = dt * random.uniform(.75, 1.25)
+                if g and random.random() < .004:
+                    dt2 += random.uniform(.05, .2)   # tiny hesitation
+                out.append((min(w - 5, max(5, x + g * nx)), min(h - 5, max(5, y + g * ny)), dt2))
+            path = out
         path.append((ex, ey, hold / 1000))
 
         how, errs = None, []
