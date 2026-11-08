@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 4
+HELPER_VER = 5
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -85,27 +85,35 @@ class Adb:
         # (each `input` call itself takes ~0.1-0.3 s on the emulator, so only a few steps)
         steps = max(4, round(ms / 250))
         cmds = [f"input motionevent DOWN {sx} {sy}"]
-        # 寄り道: aim at a few random directions first, then settle on the real one (only the release point matters)
-        pts = []
-        wander_T = random.uniform(2.5, 3.5)   # about 3 s of wandering in total
+        # 寄り道: swing the pull direction around (up to ±180° from the real aim) for about 3 s,
+        # sometimes fast, sometimes slow, then settle on the real angle. Only the release point matters.
+        base = math.atan2(ey - sy, ex - sx); L0 = math.hypot(ex - sx, ey - sy)
+        def at(ang, L):
+            return (min(w - 5, max(5, sx + math.cos(ang) * L)), min(h - 5, max(5, sy + math.sin(ang) * L)))
+        cur_a, cur_L = base + random.uniform(-.3, .3), L0 * random.uniform(.3, .6)
+        x, y = at(cur_a, cur_L); cmds.append(f"input motionevent MOVE {round(x)} {round(y)}")
         if wander:
-            for _ in range(random.randint(3, 5)):
-                a2 = random.uniform(0, 2 * math.pi); L2 = random.uniform(.15, .4) * w
-                pts.append((min(w - 5, max(5, sx + math.cos(a2) * L2)), min(h - 5, max(5, sy + math.sin(a2) * L2))))
-        pts.append((ex, ey))
-        px, py = sx, sy
-        for k, (tx, ty) in enumerate(pts):
-            n = steps if k == len(pts) - 1 else random.randint(2, 4)
-            last = k == len(pts) - 1
-            for i in range(1, n + 1):
-                if not last:   # spread the wandering time over the moves (each `input` itself takes ~0.15 s)
-                    cmds.append(f"sleep {max(0, wander_T / (len(pts) - 1) * random.uniform(.5, 1.5) / (n + 1) - .15):.2f}")
-                t = i / n
-                t = t * t * (3 - 2 * t)  # ease in/out
-                cmds.append(f"input motionevent MOVE {round(px + (tx - px) * t)} {round(py + (ty - py) * t)}")
-            if not last:
-                cmds.append(f"sleep {max(0, wander_T / (len(pts) - 1) * random.uniform(.5, 1.5) / (n + 1)):.2f}")
-            px, py = tx, ty
+            T, used = random.uniform(2.5, 3.5), 0.0
+            while used < T:
+                ta = base + math.radians(random.uniform(-180, 180))
+                tL = L0 * random.uniform(.4, 1.15)
+                dur = min(T - used, random.choice([random.uniform(.08, .25), random.uniform(.3, .6), random.uniform(.7, 1.2)]))  # fast / normal / slow
+                n = max(1, round(dur / .15))
+                for i in range(1, n + 1):
+                    t = i / n; t = t * t * (3 - 2 * t)
+                    x, y = at(cur_a + (ta - cur_a) * t, cur_L + (tL - cur_L) * t)
+                    cmds.append(f"input motionevent MOVE {round(x)} {round(y)}")
+                    pause = dur / n - .15
+                    if pause > .01: cmds.append(f"sleep {pause:.2f}")
+                if random.random() < .35:
+                    p = random.uniform(.1, .5); cmds.append(f"sleep {p:.2f}"); used += p   # hesitate
+                cur_a, cur_L = ta, tL; used += dur
+        # final approach to the exact angle (rotate, then the exact integer end point)
+        for i in range(1, steps + 1):
+            t = i / steps; t = t * t * (3 - 2 * t)
+            da = (base - cur_a + math.pi) % (2 * math.pi) - math.pi
+            x, y = at(cur_a + da * t, cur_L + (L0 - cur_L) * t)
+            cmds.append(f"input motionevent MOVE {round(x)} {round(y)}")
         cmds += [f"input motionevent MOVE {ex} {ey}", f"sleep {hold / 1000:.3f}", f"input motionevent UP {ex} {ey}"]
         try:
             out = self.run("shell", "; ".join(cmds), timeout=30)
