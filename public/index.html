@@ -192,7 +192,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.32';
+  const VERSION = '2.33';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -529,12 +529,15 @@
     if (saved) fromRatio(saved);
   } catch (e) {}
   // frame per screen shape (iPhone / BlueStacks / Android ...). Remembered once adjusted.
-  const FIELD_KEY = 'monst-fields-v1';
+  const FIELD_KEY = 'monst-fields-v2';
+  // BlueStacks 1080x1920 (9:16): measured from a screenshot (HP panel top 1420, same scale as iPhone by width)
+  const BS_FIELD = {l: 40 / 1170, r: 1129 / 1170, t: 225.5 / 1920, b: 1366.5 / 1920};
   const aspKey = () => (IH / IW).toFixed(2);
   let FIELDS = {}; try { FIELDS = JSON.parse(localStorage.getItem(FIELD_KEY) || '{}'); } catch (e) {}
   function fitField() {   // returns 'saved' | 'iphone' | 'guess'
     const k = aspKey(), f = FIELDS[k];
     if (f) { S.field = {l: f.l * IW, t: f.t * IH, r: f.r * IW, b: f.b * IH}; return 'saved'; }
+    if (Math.abs(IH / IW - 1920 / 1080) < .02) { const g = BS_FIELD; S.field = {l: g.l * IW, t: g.t * IH, r: g.r * IW, b: g.b * IH}; return 'bs'; }
     if (Math.abs(IH / IW - 2532 / 1170) < .04) { S.field = {l: DEFAULT_FIELD.l * IW, t: DEFAULT_FIELD.t * IH, r: DEFAULT_FIELD.r * IW, b: DEFAULT_FIELD.b * IH}; return 'iphone'; }
     // other shape: keep the width-based size, split the spare height like the iPhone layout (468 : 828)
     const u = IW / 1170, fh = 1236 * u, top = Math.max(0, (IH - fh) * 468 / 1296);
