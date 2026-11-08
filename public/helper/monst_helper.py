@@ -13,11 +13,11 @@
 
 必要なもの: Python 3（標準ライブラリだけで動きます）、adb（BlueStacks 付属の HD-Adb.exe を自動で探します）
 """
-import argparse, json, math, os, shutil, subprocess, sys
+import argparse, json, math, os, random, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 2
+HELPER_VER = 3
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -63,7 +63,7 @@ class Adb:
             data = data.replace(b"\r\n", b"\n")
         return data
 
-    def shoot(self, angle_deg, cx, cy, ms, hold=400):
+    def shoot(self, angle_deg, cx, cy, ms, hold=400, wander=False):
         """Pull opposite to angle_deg (0 = right, clockwise +, screen y down) from (cx, cy).
         Picks the integer end point (pull length 0.3..0.42 of the width) whose direction is closest to the angle."""
         w, h = self.size
@@ -85,10 +85,23 @@ class Adb:
         # (each `input` call itself takes ~0.1-0.3 s on the emulator, so only a few steps)
         steps = max(4, round(ms / 250))
         cmds = [f"input motionevent DOWN {sx} {sy}"]
-        for i in range(1, steps + 1):
-            t = i / steps
-            t = t * t * (3 - 2 * t)  # ease in/out
-            cmds.append(f"input motionevent MOVE {round(sx + (ex - sx) * t)} {round(sy + (ey - sy) * t)}")
+        # 寄り道: aim at a few random directions first, then settle on the real one (only the release point matters)
+        pts = []
+        if wander:
+            for _ in range(random.randint(2, 4)):
+                a2 = random.uniform(0, 2 * math.pi); L2 = random.uniform(.15, .4) * w
+                pts.append((min(w - 5, max(5, sx + math.cos(a2) * L2)), min(h - 5, max(5, sy + math.sin(a2) * L2))))
+        pts.append((ex, ey))
+        px, py = sx, sy
+        for k, (tx, ty) in enumerate(pts):
+            n = steps if k == len(pts) - 1 else random.randint(2, 4)
+            for i in range(1, n + 1):
+                t = i / n
+                t = t * t * (3 - 2 * t)  # ease in/out
+                cmds.append(f"input motionevent MOVE {round(px + (tx - px) * t)} {round(py + (ty - py) * t)}")
+            if k < len(pts) - 1:
+                cmds.append(f"sleep {random.uniform(.1, .5):.2f}")
+            px, py = tx, ty
         cmds += [f"input motionevent MOVE {ex} {ey}", f"sleep {hold / 1000:.3f}", f"input motionevent UP {ex} {ey}"]
         try:
             out = self.run("shell", "; ".join(cmds), timeout=30)
@@ -148,7 +161,7 @@ def make_handler(adb):
                     w, h = adb.size
                     cx = q.get("cx", w / 2)
                     cy = q.get("cy", h * .45)
-                    r = adb.shoot(float(q["angle"]), cx, cy, float(q.get("ms", 1200)), float(q.get("hold", 400)))
+                    r = adb.shoot(float(q["angle"]), cx, cy, float(q.get("ms", 1200)), float(q.get("hold", 400)), bool(q.get("wander")))
                     print(f"shoot {q['angle']:.2f}deg  {r}")
                     return self.reply(200, {"ok": True, **r})
                 return self.reply(404, {"ok": False, "error": "not found"})
