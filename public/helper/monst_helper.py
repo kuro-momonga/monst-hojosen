@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 6
+HELPER_VER = 7
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -104,11 +104,23 @@ class Adb:
                 cur_a, cur_L = ta, tL; used += dur
         else:
             cur_a, cur_L = base, 0
-        n = max(6, round(ms / 1000 / .04))
+        # final approach: random speed profile + zigzag that fades out right before the release
+        fin = ms / 1000 * random.uniform(.6, 1.6) if wander else ms / 1000
+        n = max(8, round(fin / .04))
+        zz = random.uniform(.10, .35) if wander else 0      # zigzag amplitude (rad)
+        zf = random.uniform(2, 6)                            # zigzag wiggles
+        prof = random.choice(["ease", "fast-slow", "slow-fast", "jerky"]) if wander else "ease"
         for i in range(1, n + 1):
-            t = i / n; t = t * t * (3 - 2 * t)
+            t = i / n
+            if prof == "ease": u = t * t * (3 - 2 * t)
+            elif prof == "fast-slow": u = 1 - (1 - t) ** 3
+            elif prof == "slow-fast": u = t ** 3
+            else: u = min(1, max(0, t + random.uniform(-.08, .08)))
             da = (base - cur_a + math.pi) % (2 * math.pi) - math.pi
-            path.append((*at(cur_a + da * t, cur_L + (L0 - cur_L) * t), ms / 1000 / n))
+            wig = zz * math.sin(zf * math.pi * t) * (1 - t) ** 1.5 if i < n else 0
+            Lw = (1 + (random.uniform(-.12, .12) if wander and i < n - 2 else 0))
+            dt = fin / n * (random.uniform(.3, 1.9) if prof == "jerky" else 1)
+            path.append((*at(cur_a + da * u + wig, (cur_L + (L0 - cur_L) * u) * Lw), dt))
         path.append((ex, ey, hold / 1000))
 
         how, errs = None, []
@@ -177,7 +189,7 @@ class Adb:
         for x, y, p in path:
             X, Y = conv(x, y)
             cmds += [ev(3, 53, X), ev(3, 54, Y), ev(0, 0, 0)]
-            pend += p - .03   # each sendevent line costs a little time itself
+            pend += p - .015   # each sendevent line costs a little time itself
             if pend > .02:
                 cmds.append(f"sleep {pend:.2f}"); pend = 0.0
         cmds += [ev(3, 57, -1), ev(1, 330, 0), ev(0, 0, 0)]
