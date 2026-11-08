@@ -69,6 +69,9 @@
   #coursePanel{display:none;flex-direction:column;gap:8px}
   body.course #coursePanel{display:flex}
   body.course #mainRow, body.course .stepRow, body.course #pad{display:none !important}
+  #cpCtl{display:none}
+  #cpCtl.show{display:flex}
+  #cpArrow.on{background:var(--accent);color:#111}
   #cpStages{display:flex;gap:5px;overflow-x:auto;padding-bottom:2px}
   #cpStages button{flex:none;padding:8px 10px}
   #cpList{display:flex;flex-direction:column;gap:6px;height:26vh;overflow:auto}
@@ -127,6 +130,10 @@
     </div>
     <div id="cpStages"></div>
     <div id="cpHint" class="small">キャラの真ん中をタップして玉を置くと、取れるルートが下に出ます</div>
+    <div id="cpCtl" class="row" style="flex-wrap:nowrap;gap:6px">
+      <span class="small">反射</span><button id="cpBm">−</button><b id="cpBn" style="min-width:22px;text-align:center"></b><button id="cpBp">＋</button>
+      <span style="flex:1"></span><button id="cpArrow">➶ 矢印モード</button>
+    </div>
     <div id="cpList"></div>
   </div>
   <div class="row" id="mainRow" style="flex-wrap:nowrap;gap:5px">
@@ -192,7 +199,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.37';
+  const VERSION = '2.38';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -816,7 +823,7 @@
     drawMines(showLines ? pts.ev : []);
     drawEnemies(showLines ? pts.hits : new Set());
     if (showLines) {
-      if (S.wobble > 0) [-S.wobble, S.wobble].forEach(w => drawWobble(trace(S.ball.x, S.ball.y, S.angle + w, wallPad(), S.bounces)));
+      if (S.wobble > 0 && !courseOn) [-S.wobble, S.wobble].forEach(w => drawWobble(trace(S.ball.x, S.ball.y, S.angle + w, wallPad(), S.bounces)));
       drawPath(pts);
     }
 
@@ -1849,7 +1856,7 @@
   function saveCourse() { try { localStorage.setItem('monst-course', JSON.stringify({...curCourse, on: courseOn})); } catch (e) {} }
   function enterCourse(cid, si) {
     curCourse = {c: cid, s: si}; courseOn = true; saveCourse();
-    S.pierce = true; S.antiBlock = true; S.bounces = Math.max(S.bounces, 6); persist();
+    S.pierce = true; S.antiBlock = true; S.bounces = 3; persist();
     document.body.classList.add('course'); setMode('course');
   }
   function exitCourse() { courseOn = false; saveCourse(); document.body.classList.remove('course'); cpSel = null; setMode('ball'); }
@@ -1873,8 +1880,12 @@
     $('cpList').querySelectorAll('[data-i]').forEach(el => el.onclick = () => {
       const i = +el.dataset.i; cpSel = cpSel === i ? null : i;
       if (cpSel !== null) { S.angle = cpMatches[i].ang; persist(); }
+      else if (mode === 'arrow') setMode('course');
       renderCourse(); draw();
     });
+    $('cpCtl').classList.toggle('show', cpSel !== null);
+    $('cpBn').textContent = S.bounces;
+    $('cpArrow').classList.toggle('on', mode === 'arrow');
   }
   function courseInfo() {
     const cs = courseStage(); if (!cs) return;
@@ -1882,6 +1893,10 @@
       <div class="small">${cs.c.common.map(t => '・' + esc(t)).join('<br>')}</div><button id="closeS">閉じる</button>`, sh => sh.querySelector('#closeS').onclick = closeSheet);
   }
   $('cpExit').onclick = exitCourse;
+  const cpBounce = d => { S.bounces = Math.max(1, Math.min(20, S.bounces + d)); persist(); syncUI(); $('cpBn').textContent = S.bounces; draw(); };
+  $('cpBm').onclick = () => cpBounce(-1);
+  $('cpBp').onclick = () => cpBounce(1);
+  $('cpArrow').onclick = () => { setMode(mode === 'arrow' ? 'course' : 'arrow'); $('cpArrow').classList.toggle('on', mode === 'arrow'); };
   $('cpImg').onclick = () => $('file').click();
   $('cpInfo').onclick = courseInfo;
   $('cpZoom').onclick = () => { ballZoom = ballZoom ? null : [S.ball.x, S.ball.y]; $('cpZoom').classList.toggle('on', !!ballZoom); layout(); };
