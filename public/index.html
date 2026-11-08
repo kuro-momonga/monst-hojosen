@@ -219,7 +219,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.45';
+  const VERSION = '2.46';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -558,7 +558,7 @@
     if (!saved) { saved = JSON.parse(localStorage.getItem('monst-guide-v2') || 'null'); if (saved) delete saved.r; }
     if (saved && saved.field && ['l', 't', 'r', 'b'].every(k => Math.abs(saved.field[k] - OLD_DEFAULT[k]) < .002))
       saved.field = {...DEFAULT_FIELD};   // untouched old default -> new calibrated default
-    if (saved && saved.r && (Math.abs(saved.r - 80 / 1170) < .002 || Math.abs(saved.r - 35 / 1170) < .002)) delete saved.r;   // old visual size -> measured hit radius
+    if (saved && saved.r && (Math.abs(saved.r - 80 / 1170) < .002 || Math.abs(saved.r - 35 / 1170) < .002 || saved.r > 70 / 1170)) delete saved.r;   // old / corrupted (too big) -> measured 55   // old visual size -> measured hit radius
     if (saved) fromRatio(saved);
   } catch (e) {}
   // frame per screen shape (iPhone / BlueStacks / Android ...). Remembered once adjusted.
@@ -1989,7 +1989,7 @@
     im.onload = () => {
       ceSave = {img, IW, IH, R: toRatio()};
       img = im; IW = im.naturalWidth; IH = im.naturalHeight; labelCache = null;
-      fitField(); applyLayout(); ballZoom = null;
+      fromRatio(ceSave.R); fitField(); applyLayout(); ballZoom = null;   // rescale ball etc. to this image
       document.body.classList.remove('course'); document.body.classList.add('cedit');
       $('ceTitle').textContent = `✎ ${cs.c.name} ${cs.st.n}${ph.n ? '・' + ph.n : ''}${(OVR[curCourse.c] || {})[ovrKey()] ? '（編集済み）' : ''}`;
       setMode('place'); layout(); draw();
