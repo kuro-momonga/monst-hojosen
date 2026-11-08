@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.55';
+  const VERSION = '2.56';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1924,10 +1924,15 @@
     return bsOn;
   }
   async function bsCapture() {
+    const bs = document.querySelectorAll('.bsShot');
+    bs.forEach(b => { b.disabled = true; b.textContent = '📸 取り込み中…'; });
+    toast('BlueStacksの画面を取り込んでいます…', 1500);
     try {
       const r = await fetch(BS + '/screen'); if (!r.ok) throw new Error((await r.json()).error);
       const b = await r.blob(); loadFile(new File([b], 'bluestacks.png', {type: 'image/png'}));
+      setTimeout(() => toast('📸 BlueStacksの画面を取り込みました', 1800), 50);
     } catch (e) { toast('画面を取れませんでした：' + e.message, 3000); bsStatus(true); }
+    bs.forEach(b => { b.disabled = false; b.textContent = '📸 BS'; });
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
