@@ -219,7 +219,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.47';
+  const VERSION = '2.48';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -960,11 +960,12 @@
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, x0, y0, w, h, 0, 0, w, h);
     const d = g.getImageData(0, 0, w, h).data, N = w * h;
-    const red = new Uint8Array(N), green = new Uint8Array(N), gold = new Uint8Array(N), I = new Float32Array((w + 1) * (h + 1));
+    const red = new Uint8Array(N), green = new Uint8Array(N), gold = new Uint8Array(N), blue = new Uint8Array(N), I = new Float32Array((w + 1) * (h + 1));
     for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) {
       const i = y * w + x, r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
       if (r > 150 && gg < 60 && b < 70 && r - gg > 90) red[i] = 1;      // saturated label red
       else if (r > 150 && gg > 95 && gg < 215 && b < 70 && r - b > 120) gold[i] = 1;   // gold labels (white outline)
+      else if (b > 180 && b - r > 110 && gg < 160 && b - gg > 60) blue[i] = 1;   // blue labels (white outline)
       else if (gg > 170 && r < 120 && b < 120 && gg - r > 100 && gg - b > 90) green[i] = 1;   // green labels (dark outline)
       row += (r > 150 && gg > 150 && b > 150) ? 1 : 0;                 // its (often tinted) white outline
       I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row;
@@ -983,10 +984,19 @@
       const sum = I[yb * (w + 1) + xb] - I[ya * (w + 1) + xb] - I[yb * (w + 1) + xa] + I[ya * (w + 1) + xa];
       if (sum / ((xb - xa) * (yb - ya)) > .12) coreG[i] = 1;
     }
+    const coreB = new Uint8Array(N);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x; if (!blue[i]) continue;
+      const xa = Math.max(0, x - rad), xb = Math.min(w, x + rad + 1), ya = Math.max(0, y - rad), yb = Math.min(h, y + rad + 1);
+      const sum = I[yb * (w + 1) + xb] - I[ya * (w + 1) + xb] - I[yb * (w + 1) + xa] + I[ya * (w + 1) + xa];
+      if (sum / ((xb - xa) * (yb - ya)) > .12) coreB[i] = 1;
+    }
     const out = [];
+    pass(coreB, blue, LABEL_TPL, 58.5, 28, .1);   // same font as the red labels
     pass(core, red, LABEL_TPL, 58.5, 28, .2);
     pass(coreG, gold, LABEL_TPL_Y, 58.5, 28, .1);
     pass(green, green, LABEL_TPL_G, 66, 18, .1);
+    pass(green, green, LABEL_TPL, 58.5, 18, .1);   // green in the usual font (colourful labels)
     // keep only the best one per number
     out.forEach(o => { if (o.n && out.some(p => p !== o && p.n === o.n && p.s > o.s)) o.n = 0; });
     labelCache = {img, v: out};
