@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 34
+HELPER_VER = 35
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -80,16 +80,17 @@ class Adb:
             data = data.replace(b"\r\n", b"\n")
         return data
 
-    def shoot(self, angle_deg, cx, cy, ms, hold=400, wander=False, method="auto"):
+    def shoot(self, angle_deg, cx, cy, ms, hold=400, wander=False, method="auto", seed=None):
         """Pull opposite to angle_deg (0 = right, clockwise +, screen y down) from (cx, cy).
         Picks the integer end point (pull length 0.3..0.42 of the width) whose direction is closest to the angle."""
+        rng = random.Random(seed)   # same seed on every synced instance -> the very same movement
         w, h = self.size
         a = math.radians(angle_deg)
         dx, dy = -math.cos(a), -math.sin(a)
         best = None
         # random pull length every shot (the arrow size changes), then the integer point closest to the angle near it
-        Lc = random.uniform(.15, .70) * w
-        cx = round(cx + random.uniform(-.04, .04) * w); cy = round(cy + random.uniform(-.03, .03) * h)   # press point varies a bit too
+        Lc = rng.uniform(.15, .70) * w
+        cx = round(cx + rng.uniform(-.04, .04) * w); cy = round(cy + rng.uniform(-.03, .03) * h)   # press point varies a bit too
         # if the long pull would leave the screen, shorten it until it fits
         room = min([(w - 6 - cx) / dx if dx > 0 else (cx - 6) / -dx if dx < 0 else 1e9,
                     (h - 6 - cy) / dy if dy > 0 else (cy - 6) / -dy if dy < 0 else 1e9])
@@ -121,25 +122,25 @@ class Adb:
                     path.append((*at(a0 + (a1 - a0) * u, L0_ + (L1 - L0_) * u), dur / n))
             def pause(t):
                 path.append((*path[-1][:2], t)) if path else None
-            err = math.radians(random.uniform(10, 25)) * random.choice((1, -1))   # stay within ±25° of the real aim
-            ca, cL = base + err, L0 * random.uniform(.35, 1.3)
-            move(base + err, L0 * .1, ca, cL, random.uniform(.9, 1.6))   # first pull: unhurried
-            pause(random.uniform(.15, .5))
-            if random.random() < .45:   # look the other way once (still within ±25°)
-                la = base + math.radians(random.uniform(12, 25)) * (-1 if err > 0 else 1); lL = L0 * random.uniform(.6, 1.1)
-                move(ca, cL, la, lL, random.uniform(.4, .8)); pause(random.uniform(.2, .6))
+            err = math.radians(rng.uniform(10, 25)) * rng.choice((1, -1))   # stay within ±25° of the real aim
+            ca, cL = base + err, L0 * rng.uniform(.35, 1.3)
+            move(base + err, L0 * .1, ca, cL, rng.uniform(.9, 1.6))   # first pull: unhurried
+            pause(rng.uniform(.15, .5))
+            if rng.random() < .45:   # look the other way once (still within ±25°)
+                la = base + math.radians(rng.uniform(12, 25)) * (-1 if err > 0 else 1); lL = L0 * rng.uniform(.6, 1.1)
+                move(ca, cL, la, lL, rng.uniform(.4, .8)); pause(rng.uniform(.2, .6))
                 ca, cL = la, lL
-            for k in range(random.randint(3, 6)):
-                err *= -random.uniform(.25, .6) if random.random() < .5 else random.uniform(.25, .6)
-                na, nL = base + err, L0 * random.uniform(.4, 1.4)        # the arrow grows and shrinks a lot
-                if random.random() < .3: na = ca                          # sometimes only pull in / out
+            for k in range(rng.randint(3, 6)):
+                err *= -rng.uniform(.25, .6) if rng.random() < .5 else rng.uniform(.25, .6)
+                na, nL = base + err, L0 * rng.uniform(.4, 1.4)        # the arrow grows and shrinks a lot
+                if rng.random() < .3: na = ca                          # sometimes only pull in / out
                 d = abs((na - ca + math.pi) % (2 * math.pi) - math.pi) + abs(nL - cL) / max(L0, 1) * .6
-                speed = random.choice([random.uniform(.35, .7), random.uniform(.8, 1.3), random.uniform(1.5, 2.6)])   # quick / normal / slow
+                speed = rng.choice([rng.uniform(.35, .7), rng.uniform(.8, 1.3), rng.uniform(1.5, 2.6)])   # quick / normal / slow
                 move(ca, cL, ca + ((na - ca + math.pi) % (2 * math.pi) - math.pi), nL, (.15 + d * .9) * speed)
                 ca, cL = na, nL
-                pause(random.choice([random.uniform(.05, .2), random.uniform(.2, .6), random.uniform(.6, 1.1)]))
-            move(ca, cL, base, L0, random.uniform(.25, .5))
-            path.append((ex, ey, random.uniform(.1, .35)))
+                pause(rng.choice([rng.uniform(.05, .2), rng.uniform(.2, .6), rng.uniform(.6, 1.1)]))
+            move(ca, cL, base, L0, rng.uniform(.25, .5))
+            path.append((ex, ey, rng.uniform(.1, .35)))
         else:
             n = max(6, round(ms / 1000 / .008))
             for i in range(1, n + 1):
@@ -147,23 +148,23 @@ class Adb:
                 path.append((sx + (ex - sx) * t, sy + (ey - sy) * t, ms / 1000 / n))
         if wander:
             # settle like a hand: overshoot a little, then 2-3 small corrections onto the aim
-            ox, oy = random.gauss(0, 9), random.gauss(0, 9)
-            for k in range(random.randint(2, 3)):
-                f = (.45 ** k) * random.choice((1, -1)) if k else 1
+            ox, oy = rng.gauss(0, 9), rng.gauss(0, 9)
+            for k in range(rng.randint(2, 3)):
+                f = (.45 ** k) * rng.choice((1, -1)) if k else 1
                 tx, ty = ex + ox * f, ey + oy * f
                 lx, ly = path[-1][0], path[-1][1]
-                n = random.randint(12, 30)
+                n = rng.randint(12, 30)
                 for i in range(1, n + 1):
                     u = i / n; u = u * u * (3 - 2 * u)
-                    path.append((lx + (tx - lx) * u, ly + (ty - ly) * u, random.uniform(.006, .012)))
+                    path.append((lx + (tx - lx) * u, ly + (ty - ly) * u, rng.uniform(.006, .012)))
             lx, ly = path[-1][0], path[-1][1]
             for i in range(1, 16):
                 u = i / 15; path.append((lx + (ex - lx) * u, ly + (ey - ly) * u, .01))
             # hand noise: tremor (8-12 Hz, ~2 px) + small random jitter + uneven frame timing + micro pauses
-            f1, f2 = random.uniform(8, 12), random.uniform(3, 6)
-            a1, a2 = random.uniform(1, 2.5), random.uniform(1, 3)
-            f3, a3 = random.uniform(15, 25), random.uniform(.6, 1.4)     # fine, fast finger shake
-            ph = [random.uniform(0, 6.3) for _ in range(6)]
+            f1, f2 = rng.uniform(8, 12), rng.uniform(3, 6)
+            a1, a2 = rng.uniform(1, 2.5), rng.uniform(1, 3)
+            f3, a3 = rng.uniform(15, 25), rng.uniform(.6, 1.4)     # fine, fast finger shake
+            ph = [rng.uniform(0, 6.3) for _ in range(6)]
             t, out = 0.0, []
             fade_from = len(path) - 15
             # noise mostly while moving: gain follows the (smoothed) finger speed, plus random calm spells with none
@@ -172,18 +173,18 @@ class Adb:
                 t += dt
                 v = math.hypot(x - px_, y - py_) / max(dt, 1e-3); px_, py_ = x, y
                 gs += (min(1.0, v / 900) - gs) * min(1.0, dt / .08)
-                if t > calm_until and random.random() < dt * .8:   # about once a second: a still, clean moment
-                    calm_until = t + random.uniform(.25, .9)
+                if t > calm_until and rng.random() < dt * .8:   # about once a second: a still, clean moment
+                    calm_until = t + rng.uniform(.25, .9)
                 g = 0 if idx >= fade_from or t < calm_until else gs
-                nx = a1 * math.sin(2 * math.pi * f1 * t + ph[0]) + a2 * math.sin(2 * math.pi * f2 * t + ph[1]) + a3 * math.sin(2 * math.pi * f3 * t + ph[4]) + random.gauss(0, 1.0)
-                ny = a1 * math.sin(2 * math.pi * f1 * t + ph[2]) + a2 * math.sin(2 * math.pi * f2 * t + ph[3]) + a3 * math.sin(2 * math.pi * f3 * t + ph[5]) + random.gauss(0, 1.0)
-                dt2 = dt * random.uniform(.75, 1.25)
-                if g > .3 and random.random() < .004:
-                    dt2 += random.uniform(.05, .2)   # tiny hesitation
+                nx = a1 * math.sin(2 * math.pi * f1 * t + ph[0]) + a2 * math.sin(2 * math.pi * f2 * t + ph[1]) + a3 * math.sin(2 * math.pi * f3 * t + ph[4]) + rng.gauss(0, 1.0)
+                ny = a1 * math.sin(2 * math.pi * f1 * t + ph[2]) + a2 * math.sin(2 * math.pi * f2 * t + ph[3]) + a3 * math.sin(2 * math.pi * f3 * t + ph[5]) + rng.gauss(0, 1.0)
+                dt2 = dt * rng.uniform(.75, 1.25)
+                if g > .3 and rng.random() < .004:
+                    dt2 += rng.uniform(.05, .2)   # tiny hesitation
                 out.append((min(w - 5, max(5, x + g * nx)), min(h - 5, max(5, y + g * ny)), dt2))
             path = out
         if wander:   # same moves, played faster (whole aiming about half the time)
-            K = random.uniform(.25, .38)
+            K = rng.uniform(.25, .38)
             path = [(x, y, dt * K) for x, y, dt in path]
         path.append((ex, ey, hold / 1000))
 
@@ -430,7 +431,8 @@ class Adb:
             raise RuntimeError(out.strip()[:200])
 
 
-def make_handler(adb):
+def make_handler(adbs):
+    adb = adbs[0]
     class H(BaseHTTPRequestHandler):
         def cors(self):
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -457,7 +459,11 @@ def make_handler(adb):
             try:
                 if self.path.startswith("/status"):
                     w, h = adb.connect()
-                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch(), "rot": adb.rot, "natural": adb.natural})
+                    others = []
+                    for A in adbs[1:]:
+                        try: A.connect(); A.touch(); others.append(A.serial)
+                        except Exception: pass
+                    return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch(), "rot": adb.rot, "natural": adb.natural, "sync": others})
                 if self.path.startswith("/screen"):
                     if not adb.size:
                         adb.connect()
@@ -471,15 +477,28 @@ def make_handler(adb):
                 n = int(self.headers.get("Content-Length") or 0)
                 q = json.loads(self.rfile.read(n) or b"{}")
                 if self.path.startswith("/shoot"):
-                    if not adb.size:
-                        adb.connect()
-                    adb.rot_override = q.get("rot")
-                    w, h = adb.size
-                    cx = q.get("cx", w / 2)
-                    cy = q.get("cy", h * .45)
-                    r = adb.shoot(float(q["angle"]), cx, cy, float(q.get("ms", 1200)), float(q.get("hold", 400)), bool(q.get("wander")), q.get("method", "auto"))
-                    print(f"shoot {q['angle']:.2f}deg  {r}")
-                    return self.reply(200, {"ok": True, **r})
+                    # every connected instance at the same time (BlueStacks' own sync only copies real mouse input)
+                    import threading
+                    seed = random.random(); res = [None] * len(adbs)
+                    def one(i, A):
+                        try:
+                            if not A.size:
+                                A.connect()
+                            A.rot_override = q.get("rot")
+                            w, h = A.size
+                            res[i] = A.shoot(float(q["angle"]), q.get("cx", w / 2), q.get("cy", h * .45), float(q.get("ms", 1200)),
+                                             float(q.get("hold", 400)), bool(q.get("wander")), q.get("method", "auto"), seed)
+                        except Exception as e:
+                            res[i] = {"error": f"{A.serial}: {e}"}
+                    th = [threading.Thread(target=one, args=(i, A)) for i, A in enumerate(adbs)]
+                    for t in th: t.start()
+                    for t in th: t.join()
+                    print(f"shoot {q['angle']:.2f}deg  " + " | ".join(f"{A.serial}: {r.get('how') if r and 'error' not in r else r}" for A, r in zip(adbs, res)))
+                    r0 = res[0] or {}
+                    if "error" in r0:
+                        raise RuntimeError(r0["error"])
+                    errs = [r["error"] for r in res[1:] if r and "error" in r]
+                    return self.reply(200, {"ok": True, **r0, "synced": len(adbs) - len(errs), "notes": r0.get("notes", []) + errs})
                 return self.reply(404, {"ok": False, "error": "not found"})
             except Exception as e:
                 return self.reply(500, {"ok": False, "error": str(e)})
@@ -492,20 +511,22 @@ def make_handler(adb):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default="5555", help="BlueStacks の ADB ポート（設定に表示される番号）")
+    ap.add_argument("--port", default="5555", help="BlueStacks の ADB ポート（複数の画面に同時に打つならカンマ区切り: 5575,5585,5595）")
     ap.add_argument("--adb", default=None, help="adb.exe の場所（省略すると自動で探す）")
     a = ap.parse_args()
     exe = a.adb or find_adb()
     if not exe:
         print("adb が見つかりません。--adb で HD-Adb.exe の場所を指定してください"); sys.exit(1)
-    adb = Adb(exe, f"127.0.0.1:{a.port}")
-    try:
-        w, h = adb.connect()
-        print(f"BlueStacks に接続しました（{adb.serial}、画面 {w}x{h}）")
-    except Exception as e:
-        print(f"まだ BlueStacks に接続できていません: {e}\n（BlueStacks を起動して ADB をオンにしてください。ツールから接続し直せます）")
+    ports = [p.strip() for p in str(a.port).replace("、", ",").split(",") if p.strip()]
+    adbs = [Adb(exe, f"127.0.0.1:{p}") for p in ports]
+    for i, A in enumerate(adbs):
+        try:
+            w, h = A.connect(); A.touch()
+            print(f"BlueStacks に接続しました（{A.serial}、画面 {w}x{h}）" + ("  ← 画面取り込みはこれ" if i == 0 else "  ← 同時に打つ"))
+        except Exception as e:
+            print(f"{A.serial} にまだ接続できていません: {e}\n（BlueStacks を起動して ADB をオンにしてください）")
     print(f"ヘルパー v{HELPER_VER} 起動中: http://127.0.0.1:{LISTEN}  （このウィンドウを閉じると止まります）")
-    ThreadingHTTPServer(("127.0.0.1", LISTEN), make_handler(adb)).serve_forever()
+    ThreadingHTTPServer(("127.0.0.1", LISTEN), make_handler(adbs)).serve_forever()
 
 
 if __name__ == "__main__":

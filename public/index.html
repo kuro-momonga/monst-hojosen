@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.93';
+  const VERSION = '2.94';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1944,14 +1944,14 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 34)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 35)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     toast(`🎯 ${displayAngle()}° で${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + 600);
     try {
       const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander(), method: bsMethod(), rot: bsRot()})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
       bsLast = {angle: +displayAngle(), how: j.how, from: j.from, to: j.to, dev_from: j.dev_from, dev_to: j.dev_to};
       if (j.notes && j.notes.length) { console.warn(j.notes); setTimeout(() => toast('⚠ ' + j.notes.join(' / ').slice(0, 160), 6000), 4200); }
-      toast(`🎯 ${displayAngle()}° で打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'frames+swipe' ? '寄り道→標準操作で発射' : j.how === 'stream' ? 'なめらか' : j.how === 'frames' ? 'コマ送り' : j.how === 'sendevent' ? '流し込み' : j.how === 'script' ? '1つずつ送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
+      toast(`🎯 ${displayAngle()}° で${j.synced > 1 ? j.synced + '画面に' : ''}打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'frames+swipe' ? '寄り道→標準操作で発射' : j.how === 'stream' ? 'なめらか' : j.how === 'frames' ? 'コマ送り' : j.how === 'sendevent' ? '流し込み' : j.how === 'script' ? '1つずつ送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
     } catch (e) { toast('打てませんでした：' + e.message, 5000); bsStatus(true); }
   }
   document.querySelectorAll('.bsShot').forEach(b => b.onclick = bsCapture);
