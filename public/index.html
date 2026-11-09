@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.92';
+  const VERSION = '2.93';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1774,7 +1774,7 @@
       if (courseOn) {
         applyLayout(); cpSel = null; setMode('course'); dropDefeated();
         const k = autoBall();
-        if (k) { cpNeedBall = false; renderCourse(); draw(); toast(`${ORD[k]}の番：玉を自動で置きました`, 2500); }
+        if (k) { cpNeedBall = false; cpFree = true; cpSel = null; renderCourse(); draw(); toast(`${ORD[k]}の番：玉を自動で置きました。そのまま自由に狙えます`, 2500); }
         else {   // could not find the ball -> straight into ball placing (tap moves the ball, no lines)
           cpNeedBall = true; cpFree = false; if (mode === 'arrow') setMode('course');
           renderCourse(); draw(); toast('手番を読み取れませんでした。キャラの真ん中をタップして玉を置いてください', 3000);
