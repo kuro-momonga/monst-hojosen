@@ -229,7 +229,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.91';
+  const VERSION = '2.92';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1772,7 +1772,7 @@
       $('radius').max = Math.round(IW / 6);
       S.pins = []; tipD = null;
       if (courseOn) {
-        applyLayout(); cpSel = null; setMode('course');
+        applyLayout(); cpSel = null; setMode('course'); dropDefeated();
         const k = autoBall();
         if (k) { cpNeedBall = false; renderCourse(); draw(); toast(`${ORD[k]}の番：玉を自動で置きました`, 2500); }
         else {   // could not find the ball -> straight into ball placing (tap moves the ball, no lines)
@@ -2138,9 +2138,42 @@
     S.blocks = [];
     const TS = typeSizes(), KD = (OVR[curCourse.c] || {}).kinds || {};
     S.enemies = ph ? ph.e.map(([k, x, y, R, bk]) => { const d = KD[k] || {};
-      return {x: f.l + x * W + (d.dx || 0) * W, y: f.t + y * H + (d.dy || 0) * W, R: (d.R || TS[k] || R) * W, g: null, role: (bk || k === '本') ? 'book' : null, k}; }) : [];
+      return {x: f.l + x * W + (d.dx || 0) * W, y: f.t + y * H + (d.dy || 0) * W, R: (d.R || TS[k] || R) * W, g: null, role: (bk || k === '本') ? 'book' : null, k, ref: [x, y, R]}; }) : [];
     S.mines = ph ? ph.m.map(([x, y]) => ({x: f.l + x * W, y: f.t + y * H})) : [];
     persist();
+  }
+  // ---- defeated enemies: compare each enemy spot of the loaded screenshot with the stage's reference image ----
+  // (same background, so a defeated enemy's spot no longer looks like its sprite). Bosses are kept.
+  const refCache = {};
+  function refImage(id) {
+    if (refCache[id]) return refCache[id];
+    return refCache[id] = new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = `course/map/${id}.jpg`; });
+  }
+  function patchAt(src, px, py, rp) {   // gray 16x16 of the square around pixel (px, py), half size rp
+    const N = 16, c = document.createElement('canvas'); c.width = c.height = N;
+    const g = c.getContext('2d', {willReadFrequently: true});
+    g.drawImage(src, px - rp, py - rp, 2 * rp, 2 * rp, 0, 0, N, N);
+    const d = g.getImageData(0, 0, N, N).data, v = new Float32Array(N * N);
+    for (let i = 0; i < N * N; i++) v[i] = d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11;
+    return v;
+  }
+  async function dropDefeated() {
+    if (!courseOn || !img || document.body.classList.contains('cedit')) return;
+    const P = coursePhases(), ph = P[Math.min(curCourse.p || 0, P.length - 1)]; if (!ph) return;
+    const im0 = img, ref = await refImage(ph.id); if (!ref || img !== im0) return;
+    const f = S.field, W = f.r - f.l, H = f.b - f.t;
+    const rf = {l: 20 / 585 * ref.naturalWidth, t: 234 / 1266 * ref.naturalHeight, W: 544.5 / 585 * ref.naturalWidth, H: 618 / 1266 * ref.naturalHeight};
+    const keep = [], gone = [];
+    S.enemies.forEach(e => {
+      if (!e.ref || /^(ボ|中ボ)/.test(e.k || '')) { keep.push(e); return; }
+      const [x, y, R] = e.ref, r = R * .85;
+      const a = patchAt(im0, f.l + x * W, f.t + y * H, r * W), b = patchAt(ref, rf.l + x * rf.W, rf.t + y * rf.H, r * rf.W);
+      e.alive = ncc(a, b);
+      (e.alive < .3 ? gone : keep).push(e);
+    });
+    if (!gone.length) return;
+    S.enemies = keep; selEnemy = -1; persist(); renderCourse(); draw();
+    toast(`倒した敵 ${gone.length}体（${gone.map(e => e.k).join('・')}）の当たり判定を外しました（段階ボタンを押すと全部戻ります）`, 3500);
   }
   const hitOrder = ev => { const o = []; ev.forEach(q => { if (q[0] === 'e' && !o.includes(q[1])) o.push(q[1]); }); return o; };
   function renderCourse() {
