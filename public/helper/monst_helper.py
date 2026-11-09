@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 35
+HELPER_VER = 36
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -511,13 +511,23 @@ def make_handler(adbs):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default="5555", help="BlueStacks の ADB ポート（複数の画面に同時に打つならカンマ区切り: 5575,5585,5595）")
+    ap.add_argument("--port", default=None, help="BlueStacks の ADB ポート（複数の画面に同時に打つならカンマ区切り: 5575,5585,5595）")
     ap.add_argument("--adb", default=None, help="adb.exe の場所（省略すると自動で探す）")
     a = ap.parse_args()
     exe = a.adb or find_adb()
     if not exe:
         print("adb が見つかりません。--adb で HD-Adb.exe の場所を指定してください"); sys.exit(1)
-    ports = [p.strip() for p in str(a.port).replace("、", ",").split(",") if p.strip()]
+    port = a.port
+    if not port:   # ask here (cmd.exe garbles long Japanese prompts in .bat files)
+        last_f = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ports.txt")
+        last = open(last_f).read().strip() if os.path.exists(last_f) else "5555"
+        try:
+            port = input(f"BlueStacks の ADB ポート番号（複数の画面ならカンマ区切り 例 5575,5555,5565）\nそのまま Enter で前回の {last}: ").strip() or last
+        except EOFError:
+            port = last
+        try: open(last_f, "w").write(port)
+        except Exception: pass
+    ports = [p.strip() for p in str(port).replace("、", ",").replace("，", ",").replace(" ", ",").split(",") if p.strip()]
     adbs = [Adb(exe, f"127.0.0.1:{p}") for p in ports]
     for i, A in enumerate(adbs):
         try:
