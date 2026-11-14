@@ -95,6 +95,12 @@
   #cpPhases{display:flex;gap:5px}
   #cpPhases:empty{display:none}
   #cpPhases button{flex:1;padding:6px 8px;font-size:12px}
+  #stage{position:relative}
+  #needBall{display:none;position:absolute;inset:0;z-index:5;pointer-events:none;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:18px;gap:8px;border:8px solid #ff2f6d;animation:nbBlink .8s infinite}
+  #needBall b{background:#ff2f6d;color:#fff;font-size:34px;font-weight:900;padding:14px 26px;border-radius:14px;box-shadow:0 6px 30px rgba(0,0,0,.6)}
+  #needBall span{background:rgba(0,0,0,.75);color:#fff;font-size:20px;font-weight:700;padding:8px 16px;border-radius:10px}
+  body.nbOn #needBall{display:flex}
+  @keyframes nbBlink{50%{border-color:#ffcf3f}}
   .exBox{display:flex;flex-direction:column;gap:6px;margin-top:6px}
   .cpr .ord{color:#ff8fb1;font-weight:700}
   .cpr .warn{color:#ffb020;font-weight:700}
@@ -175,6 +181,7 @@
 </head>
 <body>
 <div id="stage">
+  <div id="needBall" aria-live="assertive"><b>玉が読めませんでした</b><span>手番キャラをクリックして玉を置く</span></div>
   <canvas id="cv"></canvas>
   <div id="hint"></div>
   <div id="stageLabel"></div>
@@ -278,7 +285,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.13';
+  const VERSION = '3.14';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2300,6 +2307,7 @@
   }
   const hitOrder = ev => { const o = []; ev.forEach(q => { if (q[0] === 'e' && !o.includes(q[1])) o.push(q[1]); }); return o; };
   function renderCourse() {
+    document.body.classList.toggle('nbOn', !!(courseOn && cpNeedBall));
     const cs = courseStage(); if (!cs) return;
     const P = coursePhases();
     $('cpPhases').innerHTML = P.length > 1 ? P.map((ph, i) => `<button data-ph="${i}" class="${i === (curCourse.p || 0) ? 'on' : ''}">${esc(ph.n)}</button>`).join('') : '';
