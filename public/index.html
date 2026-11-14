@@ -265,7 +265,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.96';
+  const VERSION = '2.97';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1808,7 +1808,7 @@
       if (newShape && fk === 'guess') setTimeout(() => toast('はじめての画面サイズです。枠を推定したので、ずれていたら ⋯ →「枠を調整する」で合わせてください（次からは覚えます）', 5000), 400);
       $('radius').max = Math.round(IW / 6);
       S.pins = []; tipD = null;
-      ssArm = false; gArm = 0;
+      ssArm = false; gArm = false;
       const fromBS = nextFromBS; nextFromBS = false; cropFaces(fromBS);
       if (courseOn) { (async () => {
         const im0 = img, moved = await autoPhase(); if (img !== im0) return;
@@ -1988,14 +1988,15 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 37)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 38)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
-    if (ssArm && !ss) { toast('SSの位置がわかりません。画面を取り込み直してください', 3000); return; }
-    toast(`🎯 ${displayAngle()}° で${ss ? 'SSを発動して' : ''}${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + (ss ? 2000 : 600));
+    const gt = gArm && FACES ? FACES.gtap : null;
+    if ((ssArm && !ss) || (gArm && !gt)) { toast('顔の位置がわかりません。画面を取り込み直してください', 3000); return; }
+    toast(`🎯 ${displayAngle()}° で${gt ? '守護獣を使って' : ''}${ss ? 'SSを発動して' : ''}${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + (ss ? 2000 : 600) + (gt ? 3500 : 0));
     try {
-      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander(), method: bsMethod(), rot: bsRot(), ss})});
+      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander(), method: bsMethod(), rot: bsRot(), ss, g: gt})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
-      addLog({k: turnK, ang: displayAngle(), ss: !!ss}); ssArm = false; renderFaces();
+      addLog({k: turnK, ang: displayAngle(), ss: !!ss, g: !!gt}); ssArm = false; gArm = false; renderFaces();
       bsLast = {angle: +displayAngle(), how: j.how, from: j.from, to: j.to, dev_from: j.dev_from, dev_to: j.dev_to};
       if (j.notes && j.notes.length) { console.warn(j.notes); setTimeout(() => toast('⚠ ' + j.notes.join(' / ').slice(0, 160), 6000), 4200); }
       toast(`🎯 ${displayAngle()}° で${j.synced > 1 ? j.synced + '画面に' : ''}打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'frames+swipe' ? '寄り道→標準操作で発射' : j.how === 'stream' ? 'なめらか' : j.how === 'frames' ? 'コマ送り' : j.how === 'sendevent' ? '流し込み' : j.how === 'script' ? '1つずつ送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
@@ -2484,7 +2485,7 @@
 
 
   // ======== PC 全画面モード：自動取り込み・顔（SS / 守護獣）・段階の自動切り替え・攻略・ログ ========
-  let nextFromBS = false, FACES = null, turnK = 0, ssArm = false, gArm = 0, instState = [];
+  let nextFromBS = false, FACES = null, turnK = 0, ssArm = false, gArm = false, instState = [];
   function panelTop(src, W, H) {   // y of the yellow party panel (null if none)
     const y0 = Math.round(H * .5), h = H - y0, c = document.createElement('canvas'); c.width = W; c.height = h;
     const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(src, 0, y0, W, h, 0, 0, W, h);
@@ -2509,24 +2510,18 @@
     const el = $('faces');
     if (!FACES || !courseOn) { el.classList.remove('show'); el.innerHTML = ''; return; }
     el.classList.add('show');
-    const gReady = gArm && Date.now() - gArm < 3000;
+    const gReady = gArm;
     el.innerHTML = FACES.img.map((src, i) => `<button data-fc="${i + 1}" class="${turnK === i + 1 ? 'turn' : ''} ${ssArm && turnK === i + 1 ? 'arm' : ''}" aria-label="${ORD[i + 1]}"><img src="${src}" alt=""><i>${turnK === i + 1 ? (ssArm ? 'SS で打つ' : '手番・押すとSS') : ORD[i + 1]}</i></button>`).join('')
-      + `<button data-fc="g" class="g ${gReady ? 'arm' : ''}" aria-label="守護獣"><img src="${FACES.g}" alt=""><i>${gReady ? 'もう一度で発動' : '守護獣'}</i></button>`;
+      + `<button data-fc="g" class="g ${gReady ? 'arm' : ''}" aria-label="守護獣"><img src="${FACES.g}" alt=""><i>${gReady ? '守護獣も使う' : '守護獣'}</i></button>`;
     el.querySelectorAll('[data-fc]').forEach(b => b.onclick = () => faceClick(b.dataset.fc));
     $('pcTurn').textContent = turnK ? `${ORD[turnK]} の手番 ・ 反射 ${S.bounces}${ssArm ? ' ・ SS' : ''}` : `反射 ${S.bounces}`;
-    document.querySelectorAll('.bsFire').forEach(b => b.textContent = ssArm ? '🎯 SSで打つ' : '🎯 打つ');
+    document.querySelectorAll('.bsFire').forEach(b => b.textContent = '🎯 ' + [gArm ? '守護獣' : '', ssArm ? 'SS' : ''].filter(Boolean).join('＋') + (ssArm || gArm ? 'で打つ' : '打つ'));
   }
   async function faceClick(w) {
     if (!FACES || !FACES.bs || !bsOn) { toast('BlueStacksから取り込んだ画面のときだけ使えます', 2500); return; }
     if (w === 'g') {
-      if (!(gArm && Date.now() - gArm < 3000)) { gArm = Date.now(); renderFaces(); setTimeout(renderFaces, 3100); return; }
-      gArm = 0; renderFaces();
-      try {
-        const r = await fetch(BS + '/tap', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({x: FACES.gtap[0], y: FACES.gtap[1], rot: bsRot(), what: '守護獣'})});
-        const j = await r.json(); if (!j.ok) throw new Error(j.error);
-        addLog({k: 0, g: true}); toast(`守護獣をタップしました${j.synced > 1 ? `（${j.synced}画面）` : ''}`, 2200);
-      } catch (e) { toast('タップできませんでした：' + e.message, 4000); }
-      return;
+      gArm = !gArm; renderFaces();
+      toast(gArm ? '守護獣も使います：🎯を押すと、守護獣をタップしてから打ちます' : '守護獣をやめました', 2500); return;
     }
     const k = +w;
     if (k !== turnK) { toast(`今は${turnK ? ORD[turnK] : '誰か'}の手番です。SSは手番のキャラだけ`, 2200); return; }
@@ -2553,7 +2548,7 @@
     autoRun = false; renderInst();
   }
   $('autoBtn').onclick = () => {
-    if (bsInfo && !(bsInfo.ver >= 37)) { toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000); return; }
+    if (bsInfo && !(bsInfo.ver >= 38)) { toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000); return; }
     autoOn = !autoOn; try { localStorage.setItem('monst-bsAuto', autoOn ? '1' : '0'); } catch (e) {}
     toast(autoOn ? 'ターンが始まったら自動で取り込みます（手番の顔がせり上がったとき）' : '自動取り込みを止めました', 2800);
     renderInst(); if (autoOn) autoLoop();
@@ -2604,7 +2599,7 @@
   }
   function renderLog() {
     $('pcLog').innerHTML = `<h4>進行ログ<span style="flex:1"></span><button id="logClr" style="padding:5px 8px;font-size:11px">クリア</button></h4><div class="lg">${
-      LOG.length ? LOG.map((l, i) => `<span>${i + 1}. ${l.g ? '守護獣' : `${l.k ? ORD[l.k] : '?'} ${l.ang}°${l.ss ? ' SS' : ''}`}${l.ph ? ' ・' + esc(l.ph) : ''}</span>`).reverse().join('') : '<span>まだありません</span>'}</div>`;
+      LOG.length ? LOG.map((l, i) => `<span>${i + 1}. ${l.k ? ORD[l.k] : '?'} ${l.ang}°${l.g ? ' 守護獣' : ''}${l.ss ? ' SS' : ''}${l.ph ? ' ・' + esc(l.ph) : ''}</span>`).reverse().join('') : '<span>まだありません</span>'}</div>`;
     $('logClr').onclick = () => { LOG = []; try { localStorage.removeItem('monst-log'); } catch (e) {} renderLog(); };
   }
   // ---- PC full screen (layout A)

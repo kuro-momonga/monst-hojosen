@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 37
+HELPER_VER = 38
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -608,6 +608,10 @@ def make_handler(adbs):
                                 A.connect()
                             A.rot_override = q.get("rot")
                             w, h = A.size
+                            g = q.get("g")   # guardian beast first (its attack plays), then the strike shot, then the pull
+                            if g:
+                                A.tap(float(g[0]), float(g[1]), seed)
+                                time.sleep(random.Random(seed).uniform(3.0, 3.6))
                             if ss:
                                 A.tap(float(ss[0]), float(ss[1]), seed)
                                 time.sleep(random.Random(seed).uniform(1.1, 1.5))
