@@ -277,7 +277,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.02';
+  const VERSION = '3.03';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2049,7 +2049,7 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 40)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 41)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
     const gt = gArm && FACES ? FACES.gtap : null;
     if ((ssArm && !ss) || (gArm && !gt)) { toast('顔の位置がわかりません。画面を取り込み直してください', 3000); return; }
@@ -2635,20 +2635,58 @@
   let phPending = null;
   async function autoPhase() {
     if (!courseOn || !img || !curCourse) return '';
+    let msg = '';
+    const bs = curCourse.c === 'philo' ? readBattle() : null;   // BATTLE n on screen decides the stage
+    if (bs != null && bs !== curCourse.s && bs < (LAYOUT[curCourse.c] || []).length) {
+      curCourse.s = bs; curCourse.p = 0; saveCourse(); phPending = null;
+      const cs0 = courseStage(); msg = `BATTLE ${bs + 1}：${cs0 ? cs0.st.n.replace(/ .*/, '') : ''} に切り替え`;
+    }
     const L = LAYOUT[curCourse.c] || [], all = [];
-    L.forEach((P, s) => P.forEach((ph, p) => all.push({s, p, id: ph.id, n: ph.n})));
-    if (all.length < 2) return '';
+    L.forEach((P, s) => { if (bs == null || s === curCourse.s) P.forEach((ph, p) => all.push({s, p, id: ph.id, n: ph.n})); });
+    if (all.length < 2) return msg;
     const f = S.field, v = fieldVec(img, f.l, f.t, f.r - f.l, f.b - f.t);
     for (const a of all) {
-      if (!PHV[a.id]) { const ref = await refImage(a.id); if (!ref) return ''; const W = ref.naturalWidth, H = ref.naturalHeight; PHV[a.id] = fieldVec(ref, 20 / 585 * W, 234 / 1266 * H, 544.5 / 585 * W, 618 / 1266 * H); }
+      if (!PHV[a.id]) { const ref = await refImage(a.id); if (!ref) return msg; const W = ref.naturalWidth, H = ref.naturalHeight; PHV[a.id] = fieldVec(ref, 20 / 585 * W, 234 / 1266 * H, 544.5 / 585 * W, 618 / 1266 * H); }
       a.sc = ncc(v, PHV[a.id]);
     }
     const ci = all.findIndex(a => a.s === curCourse.s && a.p === (curCourse.p || 0));
     const ord = all.map((a, i) => i).sort((i, j) => all[j].sc - all[i].sc), b = ord[0], b2 = ord[1];
-    if (all[b].sc < .35 || all[b].sc - all[b2].sc < .08 || b <= ci) { phPending = null; return ''; }
-    if (b - ci > 1 && phPending !== b) { phPending = b; return ''; }   // a big jump has to be seen twice
+    if (all[b].sc < .35 || all[b].sc - all[b2].sc < .08 || b <= ci) { phPending = null; return msg; }
+    if (b - ci > 1 && phPending !== b) { phPending = b; return msg; }   // a big jump has to be seen twice
     phPending = null; const a = all[b]; curCourse.s = a.s; curCourse.p = a.p; saveCourse();
     const cs = courseStage(); return `${cs ? cs.st.n.replace(/ .*/, '') : ''}${a.n ? '・' + a.n : ''} に切り替え`;
+  }
+  // ---- BATTLE n (bottom-left of the party panel) -> which stage. 1 and 2 are known shapes; a new shape = the next stage (learned)
+  const BT_KNOWN = {0: '0000000000000000000000000000000000000000000000699990000000000000005999900000000000000000199000000000000000000990000000000000000009900000000000000000099000000000000000000990000000000000000009900000000000000000099000000000000000000990000000000000000009900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000', 1: '0000000000000000000000000002310000000000000018999998100000000000897333895000000000009900000980000000000053000009900000000000000013696000000000000166999920000000000039996631000000000000992000000000000000009900000000000000000099766666400000000000666666663000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'};
+  let BT_LEARN = {}; try { BT_LEARN = JSON.parse(localStorage.getItem('monst-battle') || '{}'); } catch (e) {}
+  let btLast = null;   // {s, v}
+  function battleVec() {
+    if (!img || IH <= IW) return null;
+    const P = panelTop(img, IW, IH); if (P == null) return null;
+    const u = IW / 1170, x0 = Math.round(45 * u), y0 = Math.round(P + 372 * u), w = Math.round(60 * u), h = Math.round(56 * u);
+    if (y0 + h > IH) return null;
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, v = new Float32Array(400);
+    for (let i = 0; i < 20; i++) for (let j = 0; j < 20; j++) {
+      const ya = Math.floor(i * h / 20), yb = Math.max(ya + 1, Math.floor((i + 1) * h / 20)), xa = Math.floor(j * w / 20), xb = Math.max(xa + 1, Math.floor((j + 1) * w / 20));
+      let n = 0, t = 0; for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) { const k = (y * w + x) * 4; t++; if (Math.min(d[k], d[k + 1], d[k + 2]) > 190) n++; }
+      v[i * 20 + j] = n / t;
+    }
+    return v;
+  }
+  function readBattle() {
+    const v = battleVec(); if (!v) return null;
+    let s = null, best = .9;
+    const known = {...Object.fromEntries(Object.entries(BT_KNOWN).map(([k, t]) => [k, Float32Array.from(t, c => (+c + .5) / 10)])), ...Object.fromEntries(Object.entries(BT_LEARN).map(([k, a]) => [k, Float32Array.from(a)]))};
+    for (const k in known) { const sc = ncc(v, known[k]); if (sc > best) { best = sc; s = +k; } }
+    if (s == null && btLast && ncc(v, btLast.v) < .8 && btLast.s < 7) {   // a digit not seen yet, after a known one: the next stage
+      s = btLast.s + 1; BT_LEARN[s] = Array.from(v, x => Math.round(x * 100) / 100);
+      try { localStorage.setItem('monst-battle', JSON.stringify(BT_LEARN)); } catch (e) {}
+    }
+    if (s == null && btLast && ncc(v, btLast.v) >= .8) s = btLast.s;
+    if (s != null) btLast = {s, v};
+    return s;
   }
   // ---- strategy panel + memo, shot log
   let MEMO = {}; try { MEMO = JSON.parse(localStorage.getItem('monst-memo') || '{}'); } catch (e) {}

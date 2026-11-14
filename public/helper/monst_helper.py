@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 40
+HELPER_VER = 41
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -89,8 +89,9 @@ class Adb:
         return turn_from_rgba(data, off, w, h)
 
     def tap(self, x, y, seed=None):
-        """a quick click-like tap (finger down ~60-90 ms). One binary stream, so it is never a long press
-        (separate sendevent calls took long enough to open the character's info instead of the strike shot)"""
+        """a click-like tap: finger down ~50 ms. The down / up events are written to files on the emulator first,
+        then one shell command writes them to the touch device with only a short sleep between
+        (streaming through adb or many sendevent calls was slow enough to count as a long press)"""
         rng = random.Random(seed)
         if not self.touch():
             self.run("shell", "input", "tap", str(round(x)), str(round(y)), timeout=10); return "input"
@@ -102,20 +103,12 @@ class Adb:
         conv = self.conv_fn(); d = self._touch["dev"]
         x += rng.uniform(-3, 3); y += rng.uniform(-3, 3)
         X, Y = conv(x, y)
+        for name, data in (("monst_d.bin", pk(self.E_down(X, Y))), ("monst_u.bin", pk(self.E_up()))):
+            r = subprocess.run([self.exe, "-s", self.serial, "exec-in", f"cat > /data/local/tmp/{name}"], input=data, capture_output=True, timeout=10)
+            if r.returncode != 0:
+                raise RuntimeError("tap file: " + (r.stderr or b"").decode(errors="ignore")[:120])
         self.unstick()
-        p = subprocess.Popen([self.exe, "-s", self.serial, "exec-in", f"dd of={d} ibs=4096 obs={self._evsize}"], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-        try:
-            p.stdin.write(pk([(0, 0, 0)] * 20)); p.stdin.flush(); time.sleep(.15)   # let dd start first
-            p.stdin.write(pk(self.E_down(X, Y))); p.stdin.flush()
-            time.sleep(rng.uniform(.06, .09))
-            p.stdin.write(pk(self.E_up()) + pk([(0, 0, 0)] * 100)); p.stdin.flush()
-            time.sleep(.15)
-            p.stdin.close(); p.wait(timeout=1.5)
-        except Exception:
-            try: p.kill()
-            except Exception: pass
-        # make sure the finger is up even if the stream's tail got stuck somewhere
-        self.run("shell", "; ".join(f"sendevent {d} {a} {b_} {c}" for a, b_, c in self.E_up()) + "; true", timeout=10)
+        self.run("shell", f"cat /data/local/tmp/monst_d.bin > {d}; sleep {rng.uniform(.04, .07):.3f}; cat /data/local/tmp/monst_u.bin > {d}", timeout=10)
         return "tap"
 
     def screencap(self):
