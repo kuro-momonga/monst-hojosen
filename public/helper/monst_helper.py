@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 38
+HELPER_VER = 39
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -89,17 +89,33 @@ class Adb:
         return turn_from_rgba(data, off, w, h)
 
     def tap(self, x, y, seed=None):
-        """a short human tap (60-110 ms, a pixel or two of drift) through the touch device"""
+        """a quick click-like tap (finger down ~60-90 ms). One binary stream, so it is never a long press
+        (separate sendevent calls took long enough to open the character's info instead of the strike shot)"""
         rng = random.Random(seed)
         if not self.touch():
             self.run("shell", "input", "tap", str(round(x)), str(round(y)), timeout=10); return "input"
+        if not hasattr(self, "_evsize"):
+            abi = self.run("shell", "getprop", "ro.product.cpu.abi").strip()
+            self._evsize = 24 if "64" in abi else 16
+        fmt = "<qqHHi" if self._evsize == 24 else "<iiHHi"
+        pk = lambda evs: b"".join(struct.pack(fmt, 0, 0, a, b_, c) for a, b_, c in evs)
         conv = self.conv_fn(); d = self._touch["dev"]
-        x += rng.uniform(-4, 4); y += rng.uniform(-4, 4)
-        X, Y = conv(x, y); X2, Y2 = conv(x + rng.uniform(-1.5, 1.5), y + rng.uniform(-1.5, 1.5))
-        ev = lambda es: "; ".join(f"sendevent {d} {a} {b} {c}" for a, b, c in es)
+        x += rng.uniform(-3, 3); y += rng.uniform(-3, 3)
+        X, Y = conv(x, y)
         self.unstick()
-        self.run("shell", ev(self.E_down(X, Y)) + f"; sleep {rng.uniform(.03, .06):.3f}; " + ev(self.E_move(X2, Y2))
-                 + f"; sleep {rng.uniform(.03, .05):.3f}; " + ev(self.E_up()) + "; true", timeout=10)
+        p = subprocess.Popen([self.exe, "-s", self.serial, "exec-in", f"dd of={d} ibs=4096 obs={self._evsize}"], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            p.stdin.write(pk([(0, 0, 0)] * 20)); p.stdin.flush(); time.sleep(.15)   # let dd start first
+            p.stdin.write(pk(self.E_down(X, Y))); p.stdin.flush()
+            time.sleep(rng.uniform(.06, .09))
+            p.stdin.write(pk(self.E_up()) + pk([(0, 0, 0)] * 100)); p.stdin.flush()
+            time.sleep(.15)
+            p.stdin.close(); p.wait(timeout=1.5)
+        except Exception:
+            try: p.kill()
+            except Exception: pass
+        # make sure the finger is up even if the stream's tail got stuck somewhere
+        self.run("shell", "; ".join(f"sendevent {d} {a} {b_} {c}" for a, b_, c in self.E_up()) + "; true", timeout=10)
         return "tap"
 
     def screencap(self):
@@ -211,8 +227,9 @@ class Adb:
                     dt2 += rng.uniform(.05, .2)   # tiny hesitation
                 out.append((min(w - 5, max(5, x + g * nx)), min(h - 5, max(5, y + g * ny)), dt2))
             path = out
-        if wander:   # same moves, played faster (whole aiming about half the time)
-            K = rng.uniform(.25, .38)
+        if wander:   # same moves, played fast: the whole aiming takes about 1.3-1.9 s (shot ~2-3 s after the button)
+            T = sum(dt for _, _, dt in path) or 1
+            K = rng.uniform(1.3, 1.9) / T
             path = [(x, y, dt * K) for x, y, dt in path]
         path.append((ex, ey, hold / 1000))
 
@@ -611,10 +628,10 @@ def make_handler(adbs):
                             g = q.get("g")   # guardian beast first (its attack plays), then the strike shot, then the pull
                             if g:
                                 A.tap(float(g[0]), float(g[1]), seed)
-                                time.sleep(random.Random(seed).uniform(3.0, 3.6))
+                                time.sleep(random.Random(seed).uniform(2.6, 3.0))
                             if ss:
                                 A.tap(float(ss[0]), float(ss[1]), seed)
-                                time.sleep(random.Random(seed).uniform(1.1, 1.5))
+                                time.sleep(random.Random(seed).uniform(.35, .55))
                             res[i] = A.shoot(float(q["angle"]), q.get("cx", w / 2), q.get("cy", h * .45), float(q.get("ms", 1200)),
                                              float(q.get("hold", 400)), bool(q.get("wander")), q.get("method", "auto"), seed)
                         except Exception as e:
