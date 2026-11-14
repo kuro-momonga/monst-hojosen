@@ -277,7 +277,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.06';
+  const VERSION = '3.07';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2049,7 +2049,7 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 43)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 44)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
     const gt = gArm && FACES ? FACES.gtap : null;
     if ((ssArm && !ss) || (gArm && !gt)) { toast('顔の位置がわかりません。画面を取り込み直してください', 3000); return; }

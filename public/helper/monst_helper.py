@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 43
+HELPER_VER = 44
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -682,7 +682,9 @@ def main():
     port = a.port
     if not port:   # ask here (cmd.exe garbles long Japanese prompts in .bat files)
         last_f = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ports.txt")
-        last = open(last_f).read().strip() if os.path.exists(last_f) else "5555"
+        last = open(last_f).read().strip() if os.path.exists(last_f) else ""
+        if "," not in last:
+            last = "5575,5555,5565"   # the 3 BlueStacks screens
         try:
             port = input(f"BlueStacks の ADB ポート番号（複数の画面ならカンマ区切り 例 5575,5555,5565）\nそのまま Enter で前回の {last}: ").strip() or last
         except EOFError:
