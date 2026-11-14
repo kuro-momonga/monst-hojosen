@@ -179,7 +179,7 @@
   <div id="coursePanel">
     <div class="row" style="flex-wrap:nowrap;gap:6px">
       <button id="cpExit">✕</button><b id="cpTitle" style="font-size:14px"></b><button id="cpEdit">✎ 編集</button><span style="flex:1"></span>
-      <button id="cpImg">🖼 画像</button><button id="cpWatch" class="wbtn" style="display:none">🖥 自動</button><button class="bsShot bsb" style="display:none">📸 BS</button><button id="autoBtn" class="bsb" style="display:none" title="ターンが始まったら自動で取り込む">🔁 ターン自動</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button><button id="pcBtn" title="PCで全画面">⛶</button>
+      <button id="cpImg">🖼 画像</button><button id="cpWatch" class="wbtn" style="display:none">🖥 自動</button><button class="bsShot bsb" style="display:none">📸 BS</button><button id="autoBtn" class="bsb" style="display:none" title="ターンが始まったら自動で取り込む">🔁 ターン自動</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button><button id="pcBtn" title="PC用の横並びレイアウト">⛶ PC</button>
     </div>
     <div id="pcInst" class="pcOnly"></div>
     <div id="cpStages"></div>
@@ -265,7 +265,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.97';
+  const VERSION = '2.98';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2605,19 +2605,16 @@
   // ---- PC full screen (layout A)
   function setPc(on) {
     document.body.classList.toggle('pc', on);
+    try { localStorage.setItem('monst-pc', on ? '1' : '0'); } catch (e) {}
     $('pcBtn').classList.toggle('on', on);
     if (on) { renderTips(); renderLog(); renderFaces(); }
     setTimeout(layout, 60);
   }
-  $('pcBtn').onclick = async () => {
-    const on = !document.body.classList.contains('pc');
-    if (on) { try { await document.documentElement.requestFullscreen(); } catch (e) {} }
-    else if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch (e) {} }
-    setPc(on);
-  };
-  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.classList.contains('pc')) setPc(false); });
+  // ⛶ = PC layout (field left, panel right) inside the normal browser window, so BlueStacks can stay visible beside it
+  $('pcBtn').onclick = () => setPc(!document.body.classList.contains('pc'));
   { const rc = renderCourse; renderCourse = function () { rc(); if (document.body.classList.contains('pc')) renderTips(); renderFaces(); }; }
   if (autoOn) setTimeout(() => { renderInst(); autoLoop(); }, 800);
+  try { if (localStorage.getItem('monst-pc') === '1') setTimeout(() => setPc(true), 50); } catch (e) {}
 
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
