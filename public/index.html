@@ -278,7 +278,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.11';
+  const VERSION = '3.12';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1188,8 +1188,8 @@
     return v[ord[0]] < .6 && v[ord[1]] - v[ord[0]] > .25 ? ord[0] + 1 : 0;
   }
   // put the ball on the character whose turn it is (portrait popped up + its 1st..4th label)
-  function autoBall() {
-    const k = detectTurn(); if (!k) return 0;
+  function autoBall(hint) {
+    const k = detectTurn() || hint || 0; if (!k) return 0;
     const b = findLabelBalls().find(o => o.n === k); if (!b) return 0;
     S.ball.x = b.x; S.ball.y = b.y; ballZoom = null; clampBall(); persist();
     return k;
@@ -1875,7 +1875,8 @@
       if (courseOn) { (async () => {
         const moved = '';   // stage / phase are picked by hand (automatic stage detection is off)
         applyLayout(); cpSel = null; setMode('course'); dropDefeated();
-        const k = autoBall(); turnK = k || detectTurn();   // whose turn, even when its ball could not be found
+        const hint = capHint; capHint = 0;   // NEXT TURN capture: the portrait has not risen yet, the helper says who is next
+        const k = autoBall(hint); turnK = k || detectTurn() || hint;   // whose turn, even when its ball could not be found
         if (k) {
           cpNeedBall = false; cpFree = true; cpSel = null; renderCourse();
           if (cpMatches.length) { cpSel = 0; S.angle = cpMatches[0].ang; persist(); renderCourse(); }   // best route picked; shooting is still up to you
@@ -2050,7 +2051,7 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 45)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 46)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
     const gt = gArm && FACES ? FACES.gtap : null;
     if ((ssArm && !ss) || (gArm && !gt)) { toast('顔の位置がわかりません。画面を取り込み直してください', 3000); return; }
@@ -2279,6 +2280,7 @@
   }
   async function dropDefeated() {
     if (!courseOn || !img || document.body.classList.contains('cedit')) return;
+    const bannerCap = capNext; capNext = false;
     const P = coursePhases(), ph = P[Math.min(curCourse.p || 0, P.length - 1)]; if (!ph) return;
     const im0 = img, ref = await refImage(ph.id); if (!ref || img !== im0) return;
     const f = S.field, W = f.r - f.l, H = f.b - f.t;
@@ -2286,6 +2288,7 @@
     const keep = [], gone = [];
     S.enemies.forEach(e => {
       if (!e.ref || /^(ボ|中ボ)/.test(e.k || '')) { keep.push(e); return; }
+      if (bannerCap && e.y > IH * .34 && e.y < IH * .5) { keep.push(e); return; }   // hidden by the NEXT TURN banner
       const [x, y, R] = e.ref, r = R * .85;
       const a = patchAt(im0, f.l + x * W, f.t + y * H, r * W), b = patchAt(ref, rf.l + x * rf.W, rf.t + y * rf.H, r * rf.W);
       e.alive = ncc(a, b);
@@ -2567,6 +2570,7 @@
 
 
   // ======== PC 全画面モード：自動取り込み・顔（SS / 守護獣）・段階の自動切り替え・攻略・ログ ========
+  let capHint = 0, capNext = false;
   let nextFromBS = false, FACES = null, turnK = 0, ssArm = false, gArm = false, instState = [];
   function panelTop(src, W, H) {   // y of the yellow party panel (null if none)
     const y0 = Math.round(H * .5), h = H - y0, c = document.createElement('canvas'); c.width = W; c.height = h;
@@ -2629,7 +2633,7 @@
         if (!j.ok) throw new Error(j.error || 'watch');
         instState = j.inst || []; renderInst();
         if (!bsOn) bsStatus(true);
-        if (since >= 0 && j.ev && autoOn) await bsCapture(j.ev.i);
+        if (since >= 0 && j.ev && autoOn) { capHint = j.ev.k || 0; capNext = !!j.ev.next; await bsCapture(j.ev.i); }
         since = j.id;
       } catch (e) { instState = []; renderInst(); await new Promise(r => setTimeout(r, 3000)); }
     }

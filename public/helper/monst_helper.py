@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 45
+HELPER_VER = 46
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -87,6 +87,7 @@ class Adb:
             if off < 12 or off > 64:
                 return 0
         self._last = (data, off, w, h, time.time())   # /screen can hand this very frame over right away
+        self.next_turn = next_turn_rgba(data, off, w, h)
         return turn_from_rgba(data, off, w, h)
 
     def raw_frame(self):
@@ -526,6 +527,23 @@ def turn_from_rgba(data, off, w, h):
     return o[0] + 1 if v[o[0]] < .6 and v[o[1]] - v[o[0]] > .25 else 0
 
 
+def next_turn_rgba(data, off, w, h):
+    """the blue "NEXT TURN" banner across the middle of the field: shown right after the enemy turn
+    (the layout is final then), ~0.6 s before the next portrait rises"""
+    if w > h:
+        return False
+    x0, x1 = int(w * .12), int(w * .88); st = 12; hits = 0; best = 0.0
+    for y in range(int(h * .30), int(h * .56), 2):
+        o = off + y * w * 4
+        seg = data[o + x0 * 4:o + x1 * 4]
+        r, g, b = seg[0::st], seg[1::st], seg[2::st]
+        n = sum(1 for R, G, B in zip(r, g, b) if B > 215 and R < 100 and 90 < G < 215)
+        f = n / max(len(r), 1)
+        if f > .12: hits += 2
+        if f > best: best = f
+    return best >= .25 and hits >= 40
+
+
 class Watcher:
     """Looks at every instance about twice a second while the tool asks for it (auto read).
     A turn starts when a portrait rises: fire once per rise (after the portraits were down, or another one rose)."""
@@ -548,13 +566,27 @@ class Watcher:
                 k = A.raw_turn(); st["ok"] = True; st["err"] = ""
             except Exception as e:
                 st["ok"] = False; st["err"] = str(e)[:120]; time.sleep(2); continue
+            if k == 0 and getattr(A, "next_turn", False) and not st.get("nt"):
+                # NEXT TURN: fire now with the expected next character; the portrait that rises next is then the same turn
+                nk = (st["fired"] % 4) + 1 if st["fired"] else 0
+                st["nt"] = True; st["zeros"] = 0; st["fired"] = nk; st["nt_k"] = nk
+                with self.cond:
+                    t, kk = self.last_fire
+                    if not (time.time() - t < 2.5):
+                        self.last_fire = (time.time(), nk)
+                        self.id += 1; self.ev = {"id": self.id, "i": i, "k": nk, "t": time.time(), "next": True}
+                        print(f"NEXT TURN（{A.serial}）→ 取り込み（次は {ORD.get(nk, '?')} のはず）")
+                        self.cond.notify_all()
+            if k:
+                st["nt"] = False
             prev, st["raw"] = st["raw"], k
             if k != prev:          # needs the same reading twice in a row
                 time.sleep(.05); continue
             if k == 0:
                 st["zeros"] += 1
             else:
-                fire = st["zeros"] >= 2 or k != st["fired"]
+                fire = (st["zeros"] >= 2 and not st.get("nt_k")) or k != st["fired"]
+                st["nt_k"] = 0
                 st["zeros"] = 0
                 if fire:
                     st["fired"] = k
