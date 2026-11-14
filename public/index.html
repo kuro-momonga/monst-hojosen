@@ -277,7 +277,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.03';
+  const VERSION = '3.04';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1874,7 +1874,7 @@
       if (courseOn) { (async () => {
         const im0 = img, moved = await autoPhase(); if (img !== im0) return;
         applyLayout(); cpSel = null; setMode('course'); dropDefeated();
-        const k = autoBall(); turnK = k;
+        const k = autoBall(); turnK = k || detectTurn();   // whose turn, even when its ball could not be found
         if (k) {
           cpNeedBall = false; cpFree = true; cpSel = null; renderCourse();
           if (cpMatches.length) { cpSel = 0; S.angle = cpMatches[0].ang; persist(); renderCourse(); }   // best route picked; shooting is still up to you
@@ -2599,7 +2599,7 @@
       toast(gArm ? '守護獣も使います：🎯を押すと、守護獣をタップしてから打ちます' : '守護獣をやめました', 2500); return;
     }
     const k = +w;
-    if (k !== turnK) { toast(`今は${turnK ? ORD[turnK] : '誰か'}の手番です。SSは手番のキャラだけ`, 2200); return; }
+    if (k !== turnK) { turnK = k; ssArm = true; renderFaces(); toast(`${ORD[k]} のSSを使います（手番を ${ORD[k]} にしました）`, 2500); return; }   // the turn could not be read: the face you press decides
     ssArm = !ssArm; renderFaces();
     toast(ssArm ? 'SSで打ちます：🎯を押すと、顔をタップしてから同じ角度で引きます' : 'SSをやめました', 2500);
   }
