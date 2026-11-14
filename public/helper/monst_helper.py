@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 44
+HELPER_VER = 45
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -86,7 +86,30 @@ class Adb:
             data = data.replace(b"\r\n", b"\n"); off = len(data) - w * h * 4
             if off < 12 or off > 64:
                 return 0
+        self._last = (data, off, w, h, time.time())   # /screen can hand this very frame over right away
         return turn_from_rgba(data, off, w, h)
+
+    def raw_frame(self):
+        data = self.run("exec-out", "screencap", binary=True, timeout=8)
+        w, h = struct.unpack_from("<II", data, 0)
+        off = len(data) - w * h * 4
+        if off < 12 or off > 64:
+            data = data.replace(b"\r\n", b"\n"); off = len(data) - w * h * 4
+        if off < 12 or off > 64:
+            raise RuntimeError("raw screencap")
+        return data, off, w, h
+
+    def screen_bmp(self, max_age=2.0):
+        """the screen as a BMP (no PNG encoding on the emulator: much faster). Reuses the watcher's frame when fresh."""
+        last = getattr(self, "_last", None)
+        if last and time.time() - last[4] <= max_age:
+            data, off, w, h, _ = last
+        else:
+            data, off, w, h = self.raw_frame()
+        px = bytearray(data[off:off + w * h * 4])
+        px[0::4], px[2::4] = px[2::4], px[0::4]          # RGBA -> BGRA
+        hdr = struct.pack("<2sIHHI", b"BM", 54 + len(px), 0, 0, 54) + struct.pack("<IiiHHIIiiII", 40, w, -h, 1, 32, 0, len(px), 2835, 2835, 0, 0)
+        return hdr + bytes(px)
 
     def tap(self, x, y, seed=None):
         """a click-like tap: finger down ~50 ms. The down / up events are written to files on the emulator first,
@@ -527,7 +550,7 @@ class Watcher:
                 st["ok"] = False; st["err"] = str(e)[:120]; time.sleep(2); continue
             prev, st["raw"] = st["raw"], k
             if k != prev:          # needs the same reading twice in a row
-                time.sleep(.3); continue
+                time.sleep(.05); continue
             if k == 0:
                 st["zeros"] += 1
             else:
@@ -543,7 +566,7 @@ class Watcher:
                             print(f"ターン開始: {ORD.get(k, k)}（{A.serial}）→ ツールに取り込みを依頼")
                             self.cond.notify_all()
             st["k"] = k
-            time.sleep(.3)
+            time.sleep(.15)
 
     def wait(self, since, timeout=20):
         self.last_req = time.time()
@@ -602,7 +625,11 @@ def make_handler(adbs):
                     A = adbs[i] if 0 <= i < len(adbs) else adb
                     if not A.size:
                         A.connect()
-                    return self.reply(200, A.screencap(), "image/png")
+                    try:
+                        return self.reply(200, A.screen_bmp(), "image/bmp")
+                    except Exception as e:
+                        print("bmp failed, png:", e)
+                        return self.reply(200, A.screencap(), "image/png")
                 return self.reply(404, {"ok": False, "error": "not found"})
             except Exception as e:
                 return self.reply(500, {"ok": False, "error": str(e)})

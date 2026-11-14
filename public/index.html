@@ -278,7 +278,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.10';
+  const VERSION = '3.11';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1858,7 +1858,7 @@
 
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
-    saveImage(file);
+    setTimeout(() => saveImage(file), 1500);   // keep it for the next visit, after the screen is up
     const url = URL.createObjectURL(file);
     const im = new Image();
     im.onload = () => {
@@ -1873,7 +1873,7 @@
       ssArm = false; gArm = false;
       const fromBS = nextFromBS; nextFromBS = false; cropFaces(fromBS);
       if (courseOn) { (async () => {
-        const im0 = img, moved = await autoPhase(); if (img !== im0) return;
+        const moved = '';   // stage / phase are picked by hand (automatic stage detection is off)
         applyLayout(); cpSel = null; setMode('course'); dropDefeated();
         const k = autoBall(); turnK = k || detectTurn();   // whose turn, even when its ball could not be found
         if (k) {
@@ -2043,14 +2043,14 @@
     toast(typeof inst === 'number' ? 'ターン開始：画面を取り込んでいます…' : 'BlueStacksの画面を取り込んでいます…', 1500);
     try {
       const r = await fetch(BS + '/screen?i=' + (typeof inst === 'number' ? inst : 0)); if (!r.ok) throw new Error((await r.json()).error);
-      const b = await r.blob(); nextFromBS = true; loadFile(new File([b], 'bluestacks.png', {type: 'image/png'}));
+      const b = await r.blob(); nextFromBS = true; loadFile(new File([b], 'bluestacks', {type: b.type || 'image/png'}));
       setTimeout(() => toast('📸 BlueStacksの画面を取り込みました', 1800), 50);
     } catch (e) { toast('画面を取れませんでした：' + e.message, 3000); bsStatus(true); }
     bs.forEach(b => { b.disabled = false; b.textContent = '📸 BS'; });
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 44)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 45)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
     const gt = gArm && FACES ? FACES.gtap : null;
     if ((ssArm && !ss) || (gArm && !gt)) { toast('顔の位置がわかりません。画面を取り込み直してください', 3000); return; }
