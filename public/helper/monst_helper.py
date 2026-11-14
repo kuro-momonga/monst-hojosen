@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 46
+HELPER_VER = 47
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -528,20 +528,20 @@ def turn_from_rgba(data, off, w, h):
 
 
 def next_turn_rgba(data, off, w, h):
-    """the blue "NEXT TURN" banner across the middle of the field: shown right after the enemy turn
-    (the layout is final then), ~0.6 s before the next portrait rises"""
+    """the blue "NEXT TURN" banner across the field: shown right after the enemy turn
+    (revives are done, the layout is final), ~0.5 s before the next portrait rises"""
     if w > h:
         return False
-    x0, x1 = int(w * .12), int(w * .88); st = 12; hits = 0; best = 0.0
-    for y in range(int(h * .30), int(h * .56), 2):
+    x0, x1 = int(w * .08), int(w * .92); st = 8; rows = 0; best = 0.0
+    for y in range(int(h * .22), int(h * .62), 2):
         o = off + y * w * 4
         seg = data[o + x0 * 4:o + x1 * 4]
         r, g, b = seg[0::st], seg[1::st], seg[2::st]
-        n = sum(1 for R, G, B in zip(r, g, b) if B > 215 and R < 100 and 90 < G < 215)
+        n = sum(1 for R, G, B in zip(r, g, b) if B > 200 and R < 120 and G > 80 and B - R > 110)
         f = n / max(len(r), 1)
-        if f > .12: hits += 2
+        if f > .1: rows += 1
         if f > best: best = f
-    return best >= .25 and hits >= 40
+    return best >= .3 and rows >= 8
 
 
 class Watcher:
