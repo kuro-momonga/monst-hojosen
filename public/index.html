@@ -128,6 +128,37 @@
   #sheet input[type=text],#sheet textarea{width:100%;background:#11141a;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;font-size:14px}
   #sheet textarea{height:120px;font-size:11px}
   .danger{color:#ff8a8a}
+  /* ---- PC 全画面（案A：左にゲーム画面、右に操作パネル） ---- */
+  .pcOnly{display:none !important}
+  body.pc{max-width:none !important;margin:0 !important;border:0 !important;flex-direction:row}
+  body.pc .pcOnly{display:flex !important}
+  body.pc #stage{flex:1 1 auto;margin-top:0}
+  body.pc #panel{width:min(580px,44vw);flex:none;border-top:0;border-left:1px solid var(--line);overflow:auto;padding:14px 16px;gap:12px}
+  body.pc #coursePanel{gap:12px}
+  body.pc #cpList{height:auto;min-height:120px;max-height:none;flex:none}
+  body.pc #cpTitle{white-space:nowrap}
+  body.pc #coursePanel > .row:first-child{flex-wrap:wrap !important}
+  body.pc #toast{top:16px}
+  #pcBig{align-items:baseline;gap:12px}
+  #pcBig b{font-size:44px;color:var(--accent);font-variant-numeric:tabular-nums;font-weight:800;line-height:1}
+  #pcBig span{color:var(--muted);font-size:13px}
+  #faces{display:none;gap:6px;align-items:flex-end}
+  #faces.show{display:flex}
+  #faces button{flex:1;padding:0;border-radius:8px;overflow:hidden;position:relative;background:#111;border:2px solid transparent;min-height:44px}
+  #faces button img{display:block;width:100%}
+  #faces button.turn{border-color:#fff}
+  #faces button.arm{border-color:#ff2f6d;box-shadow:0 0 0 3px #ff2f6d}
+  #faces button.g{flex:.9;border-color:#2c5a8f}
+  #faces button.g.arm{border-color:#ffcf3f;box-shadow:0 0 0 3px #ffcf3f}
+  #faces button i{position:absolute;left:0;right:0;bottom:0;font-style:normal;font-size:11px;font-weight:700;background:rgba(0,0,0,.65);color:#fff;padding:3px 0;text-align:center}
+  .pcBox{flex-direction:column;gap:6px;background:#12151b;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  .pcBox h4{margin:0;font-size:13px;display:flex;align-items:center;gap:8px}
+  #pcTips .tx{font-size:12px;line-height:1.65;color:#c9ced8}
+  #pcMemo{width:100%;min-height:56px;background:#0f1115;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12px;font-family:inherit;resize:vertical}
+  #pcLog .lg{display:flex;flex-wrap:wrap;gap:6px}
+  #pcLog .lg span{background:#1c2029;border-radius:999px;padding:4px 10px;font-size:12px;color:#c9ced8}
+  #pcInst{font-size:11px;color:#7fe3a8;font-weight:700}
+  #autoBtn.on{background:#1f5a3a;color:#bff5d3;border-color:#3ddc84}
   #stageLabel{position:absolute;right:8px;top:8px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:4px 8px;border-radius:8px;pointer-events:none;display:none}
 </style>
 </head>
@@ -148,17 +179,22 @@
   <div id="coursePanel">
     <div class="row" style="flex-wrap:nowrap;gap:6px">
       <button id="cpExit">✕</button><b id="cpTitle" style="font-size:14px"></b><button id="cpEdit">✎ 編集</button><span style="flex:1"></span>
-      <button id="cpImg">🖼 画像</button><button id="cpWatch" class="wbtn" style="display:none">🖥 自動</button><button class="bsShot bsb" style="display:none">📸 BS</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button>
+      <button id="cpImg">🖼 画像</button><button id="cpWatch" class="wbtn" style="display:none">🖥 自動</button><button class="bsShot bsb" style="display:none">📸 BS</button><button id="autoBtn" class="bsb" style="display:none" title="ターンが始まったら自動で取り込む">🔁 ターン自動</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button><button id="pcBtn" title="PCで全画面">⛶</button>
     </div>
+    <div id="pcInst" class="pcOnly"></div>
     <div id="cpStages"></div>
     <div id="cpPhases"></div>
     <div id="cpHint" class="small">キャラの真ん中をタップして玉を置くと、取れるルートが下に出ます</div>
+    <div id="pcBig" class="pcOnly"><b id="pcAng">0.0°</b><span id="pcTurn"></span></div>
+    <div id="faces"></div>
     <div id="cpCtl" class="row" style="flex-wrap:nowrap;gap:6px">
       <span class="small">反射</span><button id="cpBm">−</button><b id="cpBn" style="min-width:22px;text-align:center"></b><button id="cpBp">＋</button>
       <span style="flex:1"></span><button id="cpFree">✍ 自由に狙う</button><button id="cpArrow">➶ 矢印</button><button class="bsFire bsb" style="display:none">🎯 打つ</button>
     </div>
     <div id="cpFreeInfo" class="small" style="display:none"></div>
     <div id="cpList"></div>
+    <div id="pcTips" class="pcBox pcOnly"></div>
+    <div id="pcLog" class="pcBox pcOnly"></div>
   </div>
   <div class="row" id="mainRow" style="flex-wrap:nowrap;gap:5px">
     <button id="btnImg">🖼 画像</button>
@@ -229,7 +265,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.95';
+  const VERSION = '2.96';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -817,6 +853,7 @@
 
   function draw() {
     const w = cv.clientWidth, h = cv.clientHeight;
+    const pcAngEl = document.getElementById('pcAng'); if (pcAngEl) pcAngEl.textContent = displayAngle() + '°';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     const [x0, y0] = toS(0, 0);
@@ -1771,16 +1808,23 @@
       if (newShape && fk === 'guess') setTimeout(() => toast('はじめての画面サイズです。枠を推定したので、ずれていたら ⋯ →「枠を調整する」で合わせてください（次からは覚えます）', 5000), 400);
       $('radius').max = Math.round(IW / 6);
       S.pins = []; tipD = null;
-      if (courseOn) {
+      ssArm = false; gArm = 0;
+      const fromBS = nextFromBS; nextFromBS = false; cropFaces(fromBS);
+      if (courseOn) { (async () => {
+        const im0 = img, moved = await autoPhase(); if (img !== im0) return;
         applyLayout(); cpSel = null; setMode('course'); dropDefeated();
-        const k = autoBall();
-        if (k) { cpNeedBall = false; cpFree = true; cpSel = null; renderCourse(); draw(); toast(`${ORD[k]}の番：玉を自動で置きました。そのまま自由に狙えます`, 2500); }
+        const k = autoBall(); turnK = k;
+        if (k) {
+          cpNeedBall = false; cpFree = true; cpSel = null; renderCourse();
+          if (cpMatches.length) { cpSel = 0; S.angle = cpMatches[0].ang; persist(); renderCourse(); }   // best route picked; shooting is still up to you
+          draw(); renderFaces();
+          toast(`${moved ? moved + ' ・ ' : ''}${ORD[k]}の番：玉を置きました${cpMatches.length ? '（一番上のルートを選択中）' : ''}`, 2800);
+        }
         else {   // could not find the ball -> straight into ball placing (tap moves the ball, no lines)
           cpNeedBall = true; cpFree = false; if (mode === 'arrow') setMode('course');
           renderCourse(); draw(); toast('手番を読み取れませんでした。キャラの真ん中をタップして玉を置いてください', 3000);
         }
-        return;
-      }
+      })(); return; }
       const after = reset => {
         closeSheet();
         if (reset) { S.enemies = []; S.blocks = []; S.mines = []; cur = null; setTimeout(() => runDetect(true), 30); }
@@ -1931,30 +1975,33 @@
     document.querySelectorAll('.bsb').forEach(b => b.style.display = bsOn ? '' : 'none');
     return bsOn;
   }
-  async function bsCapture() {
+  async function bsCapture(inst) {
     const bs = document.querySelectorAll('.bsShot');
     bs.forEach(b => { b.disabled = true; b.textContent = '📸 取り込み中…'; });
-    toast('BlueStacksの画面を取り込んでいます…', 1500);
+    toast(typeof inst === 'number' ? 'ターン開始：画面を取り込んでいます…' : 'BlueStacksの画面を取り込んでいます…', 1500);
     try {
-      const r = await fetch(BS + '/screen'); if (!r.ok) throw new Error((await r.json()).error);
-      const b = await r.blob(); loadFile(new File([b], 'bluestacks.png', {type: 'image/png'}));
+      const r = await fetch(BS + '/screen?i=' + (typeof inst === 'number' ? inst : 0)); if (!r.ok) throw new Error((await r.json()).error);
+      const b = await r.blob(); nextFromBS = true; loadFile(new File([b], 'bluestacks.png', {type: 'image/png'}));
       setTimeout(() => toast('📸 BlueStacksの画面を取り込みました', 1800), 50);
     } catch (e) { toast('画面を取れませんでした：' + e.message, 3000); bsStatus(true); }
     bs.forEach(b => { b.disabled = false; b.textContent = '📸 BS'; });
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 35)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
-    toast(`🎯 ${displayAngle()}° で${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + 600);
+    if (bsInfo && !(bsInfo.ver >= 37)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
+    if (ssArm && !ss) { toast('SSの位置がわかりません。画面を取り込み直してください', 3000); return; }
+    toast(`🎯 ${displayAngle()}° で${ss ? 'SSを発動して' : ''}${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + (ss ? 2000 : 600));
     try {
-      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander(), method: bsMethod(), rot: bsRot()})});
+      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 400, wander: bsWander(), method: bsMethod(), rot: bsRot(), ss})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
+      addLog({k: turnK, ang: displayAngle(), ss: !!ss}); ssArm = false; renderFaces();
       bsLast = {angle: +displayAngle(), how: j.how, from: j.from, to: j.to, dev_from: j.dev_from, dev_to: j.dev_to};
       if (j.notes && j.notes.length) { console.warn(j.notes); setTimeout(() => toast('⚠ ' + j.notes.join(' / ').slice(0, 160), 6000), 4200); }
       toast(`🎯 ${displayAngle()}° で${j.synced > 1 ? j.synced + '画面に' : ''}打ちました（ヘルパーv${(bsInfo && bsInfo.ver) || 1}・${j.how === 'frames+swipe' ? '寄り道→標準操作で発射' : j.how === 'stream' ? 'なめらか' : j.how === 'frames' ? 'コマ送り' : j.how === 'sendevent' ? '流し込み' : j.how === 'script' ? '1つずつ送信' : j.how === 'motionevent' ? 'input操作' : j.how === 'swipe' ? 'まっすぐ引く方式' : '旧方式'}）`, 4000);
     } catch (e) { toast('打てませんでした：' + e.message, 5000); bsStatus(true); }
   }
-  document.querySelectorAll('.bsShot').forEach(b => b.onclick = bsCapture);
+  document.querySelectorAll('.bsShot').forEach(b => b.onclick = () => bsCapture());
   document.querySelectorAll('.bsFire').forEach(b => b.onclick = bsFire);
   function syncKp() {
     let kp = null; try { kp = localStorage.getItem('monst-keepPref'); } catch (e) {}
@@ -2435,6 +2482,147 @@
     });
   }
 
+
+  // ======== PC 全画面モード：自動取り込み・顔（SS / 守護獣）・段階の自動切り替え・攻略・ログ ========
+  let nextFromBS = false, FACES = null, turnK = 0, ssArm = false, gArm = 0, instState = [];
+  function panelTop(src, W, H) {   // y of the yellow party panel (null if none)
+    const y0 = Math.round(H * .5), h = H - y0, c = document.createElement('canvas'); c.width = W; c.height = h;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(src, 0, y0, W, h, 0, 0, W, h);
+    const d = g.getImageData(0, 0, W, h).data;
+    for (let y = 0; y < h; y++) { let n = 0, t = 0; for (let x = 0; x < W; x += 3) { const i = (y * W + x) * 4; t++; if (d[i] > 200 && d[i + 1] > 140 && d[i + 1] < 220 && d[i + 2] < 80) n++; } if (n > t * .5) return y0 + y; }
+    return null;
+  }
+  // crop the 4 portraits + the guardian beast from the screenshot (they show OK / the gauge), with where to tap them
+  function cropFaces(fromBS) {
+    FACES = null; turnK = 0;
+    if (img && IH > IW) {
+      const P = panelTop(img, IW, IH);
+      if (P != null) {
+        const u = IW / 1170, cut = (x, y, w, h) => { const c = document.createElement('canvas'); c.width = 120; c.height = Math.round(120 * h / w); c.getContext('2d').drawImage(img, x, y, w, h, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', .8); };
+        FACES = {bs: fromBS, img: [0, 1, 2, 3].map(k => cut((27 + 220 * k) * u, P + 62 * u, 220 * u, 250 * u)), g: cut(935 * u, P + 70 * u, 215 * u, 240 * u),
+          tap: [0, 1, 2, 3].map(k => [(137 + 220 * k) * u, P + 195 * u]), gtap: [1043 * u, P + 195 * u]};
+      }
+    }
+    renderFaces();
+  }
+  function renderFaces() {
+    const el = $('faces');
+    if (!FACES || !courseOn) { el.classList.remove('show'); el.innerHTML = ''; return; }
+    el.classList.add('show');
+    const gReady = gArm && Date.now() - gArm < 3000;
+    el.innerHTML = FACES.img.map((src, i) => `<button data-fc="${i + 1}" class="${turnK === i + 1 ? 'turn' : ''} ${ssArm && turnK === i + 1 ? 'arm' : ''}" aria-label="${ORD[i + 1]}"><img src="${src}" alt=""><i>${turnK === i + 1 ? (ssArm ? 'SS で打つ' : '手番・押すとSS') : ORD[i + 1]}</i></button>`).join('')
+      + `<button data-fc="g" class="g ${gReady ? 'arm' : ''}" aria-label="守護獣"><img src="${FACES.g}" alt=""><i>${gReady ? 'もう一度で発動' : '守護獣'}</i></button>`;
+    el.querySelectorAll('[data-fc]').forEach(b => b.onclick = () => faceClick(b.dataset.fc));
+    $('pcTurn').textContent = turnK ? `${ORD[turnK]} の手番 ・ 反射 ${S.bounces}${ssArm ? ' ・ SS' : ''}` : `反射 ${S.bounces}`;
+    document.querySelectorAll('.bsFire').forEach(b => b.textContent = ssArm ? '🎯 SSで打つ' : '🎯 打つ');
+  }
+  async function faceClick(w) {
+    if (!FACES || !FACES.bs || !bsOn) { toast('BlueStacksから取り込んだ画面のときだけ使えます', 2500); return; }
+    if (w === 'g') {
+      if (!(gArm && Date.now() - gArm < 3000)) { gArm = Date.now(); renderFaces(); setTimeout(renderFaces, 3100); return; }
+      gArm = 0; renderFaces();
+      try {
+        const r = await fetch(BS + '/tap', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({x: FACES.gtap[0], y: FACES.gtap[1], rot: bsRot(), what: '守護獣'})});
+        const j = await r.json(); if (!j.ok) throw new Error(j.error);
+        addLog({k: 0, g: true}); toast(`守護獣をタップしました${j.synced > 1 ? `（${j.synced}画面）` : ''}`, 2200);
+      } catch (e) { toast('タップできませんでした：' + e.message, 4000); }
+      return;
+    }
+    const k = +w;
+    if (k !== turnK) { toast(`今は${turnK ? ORD[turnK] : '誰か'}の手番です。SSは手番のキャラだけ`, 2200); return; }
+    ssArm = !ssArm; renderFaces();
+    toast(ssArm ? 'SSで打ちます：🎯を押すと、顔をタップしてから同じ角度で引きます' : 'SSをやめました', 2500);
+  }
+  // ---- turn-start auto read (helper watches every instance; the portrait rising = a new turn)
+  let autoOn = false, autoRun = false; try { autoOn = localStorage.getItem('monst-bsAuto') === '1'; } catch (e) {}
+  function renderInst() {
+    $('pcInst').textContent = autoOn && instState.length ? '🔁 自動取り込み中 ・ ' + instState.map((s, i) => `${i + 1}P ${s.ok ? (s.k ? ORD[s.k] : '待機') : '×'}`).join(' ／ ') : '';
+    $('autoBtn').classList.toggle('on', autoOn);
+  }
+  async function autoLoop() {
+    if (autoRun) return; autoRun = true; let since = -1;
+    while (autoOn) {
+      try {
+        const r = await fetch(BS + '/watch?since=' + since), j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'watch');
+        instState = j.inst || []; renderInst();
+        if (since >= 0 && j.ev && autoOn) await bsCapture(j.ev.i);
+        since = j.id;
+      } catch (e) { instState = []; renderInst(); await new Promise(r => setTimeout(r, 3000)); }
+    }
+    autoRun = false; renderInst();
+  }
+  $('autoBtn').onclick = () => {
+    if (bsInfo && !(bsInfo.ver >= 37)) { toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000); return; }
+    autoOn = !autoOn; try { localStorage.setItem('monst-bsAuto', autoOn ? '1' : '0'); } catch (e) {}
+    toast(autoOn ? 'ターンが始まったら自動で取り込みます（手番の顔がせり上がったとき）' : '自動取り込みを止めました', 2800);
+    renderInst(); if (autoOn) autoLoop();
+  };
+  // ---- which stage / phase is on screen: compare the field with every reference map (moves forward only)
+  const PHV = {};
+  const fieldVec = (src, x, y, w, h) => {
+    const c = document.createElement('canvas'); c.width = 32; c.height = 36;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(src, x, y, w, h, 0, 0, 32, 36);
+    const d = g.getImageData(0, 0, 32, 36).data, v = new Float32Array(32 * 36);
+    for (let i = 0; i < v.length; i++) v[i] = d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11;
+    return v;
+  };
+  let phPending = null;
+  async function autoPhase() {
+    if (!courseOn || !img || !curCourse) return '';
+    const L = LAYOUT[curCourse.c] || [], all = [];
+    L.forEach((P, s) => P.forEach((ph, p) => all.push({s, p, id: ph.id, n: ph.n})));
+    if (all.length < 2) return '';
+    const f = S.field, v = fieldVec(img, f.l, f.t, f.r - f.l, f.b - f.t);
+    for (const a of all) {
+      if (!PHV[a.id]) { const ref = await refImage(a.id); if (!ref) return ''; const W = ref.naturalWidth, H = ref.naturalHeight; PHV[a.id] = fieldVec(ref, 20 / 585 * W, 234 / 1266 * H, 544.5 / 585 * W, 618 / 1266 * H); }
+      a.sc = ncc(v, PHV[a.id]);
+    }
+    const ci = all.findIndex(a => a.s === curCourse.s && a.p === (curCourse.p || 0));
+    const ord = all.map((a, i) => i).sort((i, j) => all[j].sc - all[i].sc), b = ord[0], b2 = ord[1];
+    if (all[b].sc < .35 || all[b].sc - all[b2].sc < .08 || b <= ci) { phPending = null; return ''; }
+    if (b - ci > 1 && phPending !== b) { phPending = b; return ''; }   // a big jump has to be seen twice
+    phPending = null; const a = all[b]; curCourse.s = a.s; curCourse.p = a.p; saveCourse();
+    const cs = courseStage(); return `${cs ? cs.st.n.replace(/ .*/, '') : ''}${a.n ? '・' + a.n : ''} に切り替え`;
+  }
+  // ---- strategy panel + memo, shot log
+  let MEMO = {}; try { MEMO = JSON.parse(localStorage.getItem('monst-memo') || '{}'); } catch (e) {}
+  function renderTips() {
+    const cs = courseStage(); if (!cs) return;
+    const P = coursePhases(), ph = P[curCourse.p || 0], key = `${curCourse.c}-${curCourse.s}-${curCourse.p || 0}`;
+    $('pcTips').innerHTML = `<h4>このステージの攻略<span class="small">${esc(cs.st.n)}${ph && ph.n ? '・' + esc(ph.n) : ''}</span></h4>
+      <div class="tx">${cs.st.pts.map(t => '・' + esc(t)).join('<br>')}</div>
+      <textarea id="pcMemo" placeholder="この段階のメモ（自分用）">${esc(MEMO[key] || '')}</textarea>`;
+    $('pcMemo').oninput = e => { MEMO[key] = e.target.value; try { localStorage.setItem('monst-memo', JSON.stringify(MEMO)); } catch (er) {} };
+  }
+  let LOG = []; try { LOG = JSON.parse(localStorage.getItem('monst-log') || '[]'); } catch (e) {}
+  function addLog(o) {
+    const P = coursePhases(), ph = curCourse && P[curCourse.p || 0];
+    LOG.push({...o, ph: ph ? (ph.n || (courseStage() || {st: {n: ''}}).st.n.replace(/ .*/, '')) : '', t: Date.now()});
+    LOG = LOG.slice(-60); try { localStorage.setItem('monst-log', JSON.stringify(LOG)); } catch (e) {}
+    renderLog();
+  }
+  function renderLog() {
+    $('pcLog').innerHTML = `<h4>進行ログ<span style="flex:1"></span><button id="logClr" style="padding:5px 8px;font-size:11px">クリア</button></h4><div class="lg">${
+      LOG.length ? LOG.map((l, i) => `<span>${i + 1}. ${l.g ? '守護獣' : `${l.k ? ORD[l.k] : '?'} ${l.ang}°${l.ss ? ' SS' : ''}`}${l.ph ? ' ・' + esc(l.ph) : ''}</span>`).reverse().join('') : '<span>まだありません</span>'}</div>`;
+    $('logClr').onclick = () => { LOG = []; try { localStorage.removeItem('monst-log'); } catch (e) {} renderLog(); };
+  }
+  // ---- PC full screen (layout A)
+  function setPc(on) {
+    document.body.classList.toggle('pc', on);
+    $('pcBtn').classList.toggle('on', on);
+    if (on) { renderTips(); renderLog(); renderFaces(); }
+    setTimeout(layout, 60);
+  }
+  $('pcBtn').onclick = async () => {
+    const on = !document.body.classList.contains('pc');
+    if (on) { try { await document.documentElement.requestFullscreen(); } catch (e) {} }
+    else if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch (e) {} }
+    setPc(on);
+  };
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.classList.contains('pc')) setPc(false); });
+  { const rc = renderCourse; renderCourse = function () { rc(); if (document.body.classList.contains('pc')) renderTips(); renderFaces(); }; }
+  if (autoOn) setTimeout(() => { renderInst(); autoLoop(); }, 800);
 
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);

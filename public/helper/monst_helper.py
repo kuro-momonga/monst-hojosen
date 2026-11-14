@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 36
+HELPER_VER = 37
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -73,6 +73,34 @@ class Adb:
                     if v.isdigit():
                         return int(v) % 4
         return 0
+
+    def raw_turn(self):
+        """Whose turn it is (1..4), from the bottom panel: the turn's portrait is raised, so the orange gap under it is missing.
+        0 = nobody (enemy turn / animations). Raw screencap (no PNG encode) analysed with plain Python."""
+        data = self.run("exec-out", "screencap", binary=True, timeout=8)
+        if len(data) < 16:
+            return 0
+        w, h = struct.unpack_from("<II", data, 0)
+        off = len(data) - w * h * 4
+        if w <= 0 or h <= 0 or off < 12 or off > 64:
+            data = data.replace(b"\r\n", b"\n"); off = len(data) - w * h * 4
+            if off < 12 or off > 64:
+                return 0
+        return turn_from_rgba(data, off, w, h)
+
+    def tap(self, x, y, seed=None):
+        """a short human tap (60-110 ms, a pixel or two of drift) through the touch device"""
+        rng = random.Random(seed)
+        if not self.touch():
+            self.run("shell", "input", "tap", str(round(x)), str(round(y)), timeout=10); return "input"
+        conv = self.conv_fn(); d = self._touch["dev"]
+        x += rng.uniform(-4, 4); y += rng.uniform(-4, 4)
+        X, Y = conv(x, y); X2, Y2 = conv(x + rng.uniform(-1.5, 1.5), y + rng.uniform(-1.5, 1.5))
+        ev = lambda es: "; ".join(f"sendevent {d} {a} {b} {c}" for a, b, c in es)
+        self.unstick()
+        self.run("shell", ev(self.E_down(X, Y)) + f"; sleep {rng.uniform(.03, .06):.3f}; " + ev(self.E_move(X2, Y2))
+                 + f"; sleep {rng.uniform(.03, .05):.3f}; " + ev(self.E_up()) + "; true", timeout=10)
+        return "tap"
 
     def screencap(self):
         data = self.run("exec-out", "screencap", "-p", binary=True)
@@ -431,8 +459,93 @@ class Adb:
             raise RuntimeError(out.strip()[:200])
 
 
+def turn_from_rgba(data, off, w, h):
+    u = w / 1170
+    if w > h:
+        return 0
+    st = 4 * 6
+    P = -1
+    for y in range(h // 2, h):
+        o = off + y * w * 4
+        r, g, b = data[o:o + w * 4:st], data[o + 1:o + w * 4:st], data[o + 2:o + w * 4:st]
+        n = sum(1 for R, G, B in zip(r, g, b) if R > 200 and 140 < G < 220 and B < 80)
+        if n > len(r) * .5:
+            P = y; break
+    if P < 0:
+        return 0
+    v = []
+    for k in range(4):
+        n = t = 0
+        x0, x1 = round((110 + 220 * k) * u), round((230 + 220 * k) * u)
+        for y in range(round(P + 68 * u), min(h, round(P + 84 * u)), 2):
+            o = off + y * w * 4
+            seg = data[o + x0 * 4:o + x1 * 4]
+            for i in range(0, len(seg) - 3, 12):
+                R, G, B = seg[i], seg[i + 1], seg[i + 2]; t += 1
+                if R > 200 and 110 < G < 210 and B < 90: n += 1
+        v.append(n / t if t else 1)
+    o = sorted(range(4), key=lambda i: v[i])
+    return o[0] + 1 if v[o[0]] < .6 and v[o[1]] - v[o[0]] > .25 else 0
+
+
+class Watcher:
+    """Looks at every instance about twice a second while the tool asks for it (auto read).
+    A turn starts when a portrait rises: fire once per rise (after the portraits were down, or another one rose)."""
+    def __init__(self, adbs):
+        import threading
+        self.adbs, self.cond = adbs, threading.Condition()
+        self.id, self.ev, self.last_req, self.busy, self.last_fire = 0, None, 0, 0, (0, 0)
+        self.inst = [{"serial": A.serial, "k": 0, "raw": -1, "zeros": 9, "fired": 0, "ok": False, "err": ""} for A in adbs]
+        for i, A in enumerate(adbs):
+            threading.Thread(target=self.loop, args=(i, A), daemon=True).start()
+
+    def loop(self, i, A):
+        st = self.inst[i]
+        while True:
+            if time.time() - self.last_req > 25 or time.time() < self.busy:
+                time.sleep(.4); continue
+            try:
+                if not A.size:
+                    A.connect()
+                k = A.raw_turn(); st["ok"] = True; st["err"] = ""
+            except Exception as e:
+                st["ok"] = False; st["err"] = str(e)[:120]; time.sleep(2); continue
+            prev, st["raw"] = st["raw"], k
+            if k != prev:          # needs the same reading twice in a row
+                time.sleep(.3); continue
+            if k == 0:
+                st["zeros"] += 1
+            else:
+                fire = st["zeros"] >= 2 or k != st["fired"]
+                st["zeros"] = 0
+                if fire:
+                    st["fired"] = k
+                    with self.cond:
+                        t, kk = self.last_fire
+                        if not (kk == k and time.time() - t < 5):   # the other instances see the same rise
+                            self.last_fire = (time.time(), k)
+                            self.id += 1; self.ev = {"id": self.id, "i": i, "k": k, "t": time.time()}
+                            print(f"ターン開始: {ORD.get(k, k)}（{A.serial}）→ ツールに取り込みを依頼")
+                            self.cond.notify_all()
+            st["k"] = k
+            time.sleep(.3)
+
+    def wait(self, since, timeout=20):
+        self.last_req = time.time()
+        with self.cond:
+            if since >= 0:
+                self.cond.wait_for(lambda: self.id > since, timeout=timeout)
+            self.last_req = time.time()
+            return {"ok": True, "id": self.id, "ev": self.ev if since >= 0 and self.id > since else None,
+                    "inst": [{k: v for k, v in s.items() if k in ("serial", "k", "ok", "err")} for s in self.inst]}
+
+
+ORD = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
+
+
 def make_handler(adbs):
     adb = adbs[0]
+    W = Watcher(adbs)
     class H(BaseHTTPRequestHandler):
         def cors(self):
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -464,10 +577,17 @@ def make_handler(adbs):
                         try: A.connect(); A.touch(); others.append(A.serial)
                         except Exception: pass
                     return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch(), "rot": adb.rot, "natural": adb.natural, "sync": others})
+                if self.path.startswith("/watch"):
+                    from urllib.parse import urlparse, parse_qs
+                    qs = parse_qs(urlparse(self.path).query)
+                    return self.reply(200, W.wait(int((qs.get("since") or ["-1"])[0])))
                 if self.path.startswith("/screen"):
-                    if not adb.size:
-                        adb.connect()
-                    return self.reply(200, adb.screencap(), "image/png")
+                    from urllib.parse import urlparse, parse_qs
+                    i = int((parse_qs(urlparse(self.path).query).get("i") or ["0"])[0])
+                    A = adbs[i] if 0 <= i < len(adbs) else adb
+                    if not A.size:
+                        A.connect()
+                    return self.reply(200, A.screencap(), "image/png")
                 return self.reply(404, {"ok": False, "error": "not found"})
             except Exception as e:
                 return self.reply(500, {"ok": False, "error": str(e)})
@@ -480,12 +600,17 @@ def make_handler(adbs):
                     # every connected instance at the same time (BlueStacks' own sync only copies real mouse input)
                     import threading
                     seed = random.random(); res = [None] * len(adbs)
+                    W.busy = time.time() + 30
+                    ss = q.get("ss")    # [x, y]: tap the turn's portrait first (strike shot), then pull
                     def one(i, A):
                         try:
                             if not A.size:
                                 A.connect()
                             A.rot_override = q.get("rot")
                             w, h = A.size
+                            if ss:
+                                A.tap(float(ss[0]), float(ss[1]), seed)
+                                time.sleep(random.Random(seed).uniform(1.1, 1.5))
                             res[i] = A.shoot(float(q["angle"]), q.get("cx", w / 2), q.get("cy", h * .45), float(q.get("ms", 1200)),
                                              float(q.get("hold", 400)), bool(q.get("wander")), q.get("method", "auto"), seed)
                         except Exception as e:
@@ -493,12 +618,30 @@ def make_handler(adbs):
                     th = [threading.Thread(target=one, args=(i, A)) for i, A in enumerate(adbs)]
                     for t in th: t.start()
                     for t in th: t.join()
+                    W.busy = time.time() + 1.5
                     print(f"shoot {q['angle']:.2f}deg  " + " | ".join(f"{A.serial}: {r.get('how') if r and 'error' not in r else r}" for A, r in zip(adbs, res)))
                     r0 = res[0] or {}
                     if "error" in r0:
                         raise RuntimeError(r0["error"])
                     errs = [r["error"] for r in res[1:] if r and "error" in r]
                     return self.reply(200, {"ok": True, **r0, "synced": len(adbs) - len(errs), "notes": r0.get("notes", []) + errs})
+                if self.path.startswith("/tap"):    # e.g. the guardian beast: the same tap on every instance
+                    import threading
+                    seed = random.random(); out = [None] * len(adbs); W.busy = time.time() + 5
+                    def one(i, A):
+                        try:
+                            if not A.size: A.connect()
+                            A.rot_override = q.get("rot"); out[i] = A.tap(float(q["x"]), float(q["y"]), seed)
+                        except Exception as e:
+                            out[i] = f"error {A.serial}: {e}"
+                    th = [threading.Thread(target=one, args=(i, A)) for i, A in enumerate(adbs)]
+                    for t in th: t.start()
+                    for t in th: t.join()
+                    W.busy = time.time() + .8
+                    print(f"tap ({q['x']:.0f},{q['y']:.0f}) {q.get('what', '')}: " + " | ".join(map(str, out)))
+                    if str(out[0]).startswith("error"):
+                        raise RuntimeError(out[0])
+                    return self.reply(200, {"ok": True, "synced": sum(1 for o in out if not str(o).startswith("error"))})
                 return self.reply(404, {"ok": False, "error": "not found"})
             except Exception as e:
                 return self.reply(500, {"ok": False, "error": str(e)})
