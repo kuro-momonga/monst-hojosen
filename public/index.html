@@ -81,6 +81,12 @@
   .needBall{display:block;color:#111;background:var(--accent);border-radius:8px;padding:8px 10px;font-size:13px}
   #cpFree.on, #cpArrow.on{background:var(--accent);color:#111}
   .bsFire{background:#ff2f6d !important;color:#fff !important;font-weight:700}
+  .bsFire.armed{box-shadow:0 0 0 3px #ffcf3f}
+  .armTag{color:#ff9fd0;font-size:13px}
+  body.pc #cpCtl{flex-wrap:wrap !important;row-gap:10px}
+  body.pc #cpCtl > span[style*="flex:1"]{flex:0 0 100% !important;height:0}
+  body.pc #cpFree, body.pc #cpArrow, body.pc #cpCtl .bsFire{flex:1 1 0;min-height:72px;font-size:19px;border-radius:12px}
+  body.pc #cpCtl .bsFire{flex-grow:1.6;font-size:22px}
   .wbtn.on{background:var(--accent);color:#111}
   #cpPhases{display:flex;gap:5px}
   #cpPhases:empty{display:none}
@@ -141,8 +147,8 @@
   body.pc #coursePanel > .row:first-child{flex-wrap:wrap !important}
   body.pc #toast{top:16px}
   #pcBig{align-items:baseline;gap:12px}
-  #pcBig b{font-size:44px;color:var(--accent);font-variant-numeric:tabular-nums;font-weight:800;line-height:1}
-  #pcBig span{color:var(--muted);font-size:13px}
+  #pcBig #pcAng{font-size:44px;color:var(--accent);font-variant-numeric:tabular-nums;font-weight:800;line-height:1}
+  #pcBig #pcTurn{color:var(--muted);font-size:13px}
   #faces{display:none;gap:6px;align-items:flex-end}
   #faces.show{display:flex}
   #faces button{flex:1;padding:0;border-radius:8px;overflow:hidden;position:relative;background:#111;border:2px solid transparent;min-height:44px}
@@ -265,7 +271,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.99';
+  const VERSION = '3.00';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1610,11 +1616,17 @@
       // the turn ring changes size/colour or is absent: only snap when a clear ring is found
       const r = ballZoom ? null : (nearLabelBall(ix, iy) || findRing(ix, iy));
       if (r) { S.ball.x = r.x; S.ball.y = r.y; } else { S.ball.x = ix; S.ball.y = iy; }
-      if (mode === 'course') { cpSel = null; cpNeedBall = false; clampBall(); persist(); dragInfo = null; renderCourse(); draw(); return; }
+      if (mode === 'course') { clampBall(); persist(); dragInfo = null; ballPlaced(); return; }
       if (!ballZoom) { ballZoom = [S.ball.x, S.ball.y]; clampBall(); persist(); dragInfo = null; layout(); syncZoom(); return; }
     }
     const wasBall = dragInfo && dragInfo.kind === 'ballRel';
-    dragInfo = null; padFocus = null; clampBall(); persist(); if (mode === 'course' && wasBall) { cpSel = null; cpNeedBall = false; renderCourse(); } draw(); };
+    dragInfo = null; padFocus = null; clampBall(); persist(); if (mode === 'course' && wasBall) { ballPlaced(); return; } draw(); };
+  // course: once the ball is put down, go straight to aiming (best route picked) - no confirm button
+  function ballPlaced() {
+    const was = cpNeedBall; cpSel = null; cpNeedBall = false;
+    if (was) { cpFree = true; renderCourse(); if (cpMatches.length) { cpSel = 0; S.angle = cpMatches[0].ang; persist(); } toast('玉を置きました。そのまま狙えます（置き直すときは「自由に狙う」を押す）', 2200); }
+    renderCourse(); draw();
+  }
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
 
@@ -2514,8 +2526,9 @@
     el.innerHTML = FACES.img.map((src, i) => `<button data-fc="${i + 1}" class="${turnK === i + 1 ? 'turn' : ''} ${ssArm && turnK === i + 1 ? 'arm' : ''}" aria-label="${ORD[i + 1]}"><img src="${src}" alt=""><i>${turnK === i + 1 ? (ssArm ? 'SS で打つ' : '手番・押すとSS') : ORD[i + 1]}</i></button>`).join('')
       + `<button data-fc="g" class="g ${gReady ? 'arm' : ''}" aria-label="守護獣"><img src="${FACES.g}" alt=""><i>${gReady ? '守護獣も使う' : '守護獣'}</i></button>`;
     el.querySelectorAll('[data-fc]').forEach(b => b.onclick = () => faceClick(b.dataset.fc));
-    $('pcTurn').textContent = turnK ? `${ORD[turnK]} の手番 ・ 反射 ${S.bounces}${ssArm ? ' ・ SS' : ''}` : `反射 ${S.bounces}`;
-    document.querySelectorAll('.bsFire').forEach(b => b.textContent = '🎯 ' + [gArm ? '守護獣' : '', ssArm ? 'SS' : ''].filter(Boolean).join('＋') + (ssArm || gArm ? 'で打つ' : '打つ'));
+    const arm = [gArm ? '守護獣' : '', ssArm ? 'SS' : ''].filter(Boolean).join('＋');
+    $('pcTurn').innerHTML = (turnK ? `${ORD[turnK]} の手番 ・ ` : '') + `反射 ${S.bounces}` + (arm ? ` ・ <b class="armTag">${arm}で打つ</b>` : '');
+    document.querySelectorAll('.bsFire').forEach(b => b.classList.toggle('armed', ssArm || gArm));
   }
   async function faceClick(w) {
     if (!FACES || !FACES.bs || !bsOn) { toast('BlueStacksから取り込んだ画面のときだけ使えます', 2500); return; }
