@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 41
+HELPER_VER = 42
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -103,12 +103,14 @@ class Adb:
         conv = self.conv_fn(); d = self._touch["dev"]
         x += rng.uniform(-3, 3); y += rng.uniform(-3, 3)
         X, Y = conv(x, y)
-        for name, data in (("monst_d.bin", pk(self.E_down(X, Y))), ("monst_u.bin", pk(self.E_up()))):
-            r = subprocess.run([self.exe, "-s", self.serial, "exec-in", f"cat > /data/local/tmp/{name}"], input=data, capture_output=True, timeout=10)
+        # like a real mouse click on BlueStacks: the position twice, then the release ~30 ms later
+        # (exec-in does not run a shell, so no "cat > file": dd writes the file)
+        for name, data in (("monst_d.bin", pk(self.E_down(X, Y)) * 2), ("monst_u.bin", pk(self.E_up()))):
+            r = subprocess.run([self.exe, "-s", self.serial, "exec-in", f"dd of=/data/local/tmp/{name}"], input=data, capture_output=True, timeout=10)
             if r.returncode != 0:
                 raise RuntimeError("tap file: " + (r.stderr or b"").decode(errors="ignore")[:120])
         self.unstick()
-        self.run("shell", f"cat /data/local/tmp/monst_d.bin > {d}; sleep {rng.uniform(.04, .07):.3f}; cat /data/local/tmp/monst_u.bin > {d}", timeout=10)
+        self.run("shell", f"cat /data/local/tmp/monst_d.bin > {d}; sleep {rng.uniform(.03, .05):.3f}; cat /data/local/tmp/monst_u.bin > {d}", timeout=10)
         return "tap"
 
     def screencap(self):
