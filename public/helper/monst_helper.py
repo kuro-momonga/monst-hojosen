@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 42
+HELPER_VER = 43
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -104,11 +104,14 @@ class Adb:
         x += rng.uniform(-3, 3); y += rng.uniform(-3, 3)
         X, Y = conv(x, y)
         # like a real mouse click on BlueStacks: the position twice, then the release ~30 ms later
-        # (exec-in does not run a shell, so no "cat > file": dd writes the file)
+        # (the event files go over with adb push)
+        import tempfile
+        tag = self.serial.replace(":", "_").replace(".", "_")
         for name, data in (("monst_d.bin", pk(self.E_down(X, Y)) * 2), ("monst_u.bin", pk(self.E_up()))):
-            r = subprocess.run([self.exe, "-s", self.serial, "exec-in", f"dd of=/data/local/tmp/{name}"], input=data, capture_output=True, timeout=10)
-            if r.returncode != 0:
-                raise RuntimeError("tap file: " + (r.stderr or b"").decode(errors="ignore")[:120])
+            loc = os.path.join(tempfile.gettempdir(), f"{tag}_{name}")
+            with open(loc, "wb") as fh:
+                fh.write(data)
+            self.run("push", loc, f"/data/local/tmp/{name}", timeout=15)   # plain adb push: works everywhere
         self.unstick()
         self.run("shell", f"cat /data/local/tmp/monst_d.bin > {d}; sleep {rng.uniform(.03, .05):.3f}; cat /data/local/tmp/monst_u.bin > {d}", timeout=10)
         return "tap"
