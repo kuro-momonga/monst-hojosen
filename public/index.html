@@ -2300,7 +2300,7 @@
     $('cpStages').innerHTML = cs.c.stages.map((st, i) => `<button data-st="${i}" class="${i === curCourse.s ? 'on' : ''}">${esc(st.n.replace(/ .*/, ''))}</button>`).join('');
     $('cpStages').querySelectorAll('[data-st]').forEach(b => b.onclick = () => { curCourse.s = +b.dataset.st; curCourse.p = 0; saveCourse(); applyLayout(); cpSel = null; renderCourse(); draw(); });
     const list = (ROUTES[cs.c.id] || []).filter(r => r.s === curCourse.s && (r.p == null || r.p === (curCourse.p || 0)));   // only this phase's routes
-    cpMatches = matchRoutes(list);
+    cpMatches = list.some(r => r.n) ? [] : matchRoutes(list);   // strategy-page routes are only shown as pictures
     const disp = a => { let d = a + 90; d = ((d + 180) % 360 + 360) % 360 - 180; return d.toFixed(1); };
     const seqText = o => o.length ? o.map((k, i) => `${i + 1}${(S.enemies[k] && S.enemies[k].k) || '敵'}`).join('→') : '敵に当たらない';
     const orderText = m => {
@@ -2318,7 +2318,7 @@
     };
     const where = m => m.leg < 0 ? '打ち出しの後ろ側から' : m.leg === 1 ? '1本目の線の上' : `${m.leg}本目の線の上（${m.leg - 1}回反射後）`;
     const mmss = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-    $('cpHint').textContent = cpMatches.length ? `${cs.st.n}：今の玉から取れるルート ${cpMatches.length}本（タップで線を表示）`
+    $('cpHint').textContent = list.some(r => r.n) ? `${cs.st.n}` : cpMatches.length ? `${cs.st.n}：今の玉から取れるルート ${cpMatches.length}本（タップで線を表示）`
       : `${cs.st.n}：今の玉の位置から乗れるルートはありません（ルート${list.length}本と照合）。玉の位置を確認してください`;
     if (cpNeedBall) $('cpHint').innerHTML = '<b class="needBall">① 手番を読み取れませんでした。キャラの真ん中をタップして玉を置いてください</b>';
     $('cpList').innerHTML = cpMatches.slice(0, 8).map((m, i) => {
