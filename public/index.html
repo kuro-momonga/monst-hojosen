@@ -95,6 +95,7 @@
   #cpPhases{display:flex;gap:5px}
   #cpPhases:empty{display:none}
   #cpPhases button{flex:1;padding:6px 8px;font-size:12px}
+  .exBox{display:flex;flex-direction:column;gap:6px;margin-top:6px}
   .cpr .ord{color:#ff8fb1;font-weight:700}
   .cpr .warn{color:#ffb020;font-weight:700}
   .cpr .okk{color:#5bd68a}
@@ -277,7 +278,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.07';
+  const VERSION = '3.08';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2227,6 +2228,7 @@
       sh.querySelector('#closeS').onclick = closeSheet;
     });
   }
+  let exSel = null;
   let courseOn = false, cpSel = null, cpMatches = [], cpFree = false, cpNeedBall = false;
   function saveCourse() { try { localStorage.setItem('monst-course', JSON.stringify({...curCourse, on: courseOn})); } catch (e) {} }
   function enterCourse(cid, si) {
@@ -2325,9 +2327,11 @@
         <span class="d">${lv} ずれ${m.dpx}px・${where(m)}${m.t != null ? '・動画 ' + mmss(m.t) : m.n ? '・' + esc(m.n) : ''}<br>${orderText(m)}</span></div>`;
     }).join('');
     const ex = list.filter(r => r.n);
-    if (ex.length) {
-      $('cpList').insertAdjacentHTML('beforeend', `<div class="small" style="margin-top:4px">このステージのルート例（攻略サイト）：タップで拡大</div><div class="row" style="gap:6px">${ex.map(r => `<button class="exR" data-ex="${r.id}" style="padding:3px;display:flex;flex-direction:column;align-items:center;gap:2px"><img src="course/r/${r.id}.jpg" alt="" style="width:72px;border-radius:4px"><span style="font-size:11px">${esc(r.n)}</span></button>`).join('')}</div>`);
-      $('cpList').querySelectorAll('[data-ex]').forEach(b => b.onclick = () => openSheet(`<h3>${esc(cs.st.n)} ${esc((ex.find(r => r.id === b.dataset.ex) || {}).n || '')}</h3><img src="course/r/${b.dataset.ex}_l.jpg" alt="" style="width:100%;border-radius:8px"><div class="small">青い丸の位置から打ったルート。キャラをそこに置くと、上の「取れるルート」に角度が出ます</div><button id="closeS">閉じる</button>`, sh => sh.querySelector('#closeS').onclick = closeSheet));
+    if (ex.length) {   // the strategy page's route pictures: one big picture, switch with the tabs
+      if (!ex.some(r => r.id === exSel)) exSel = ex[0].id;
+      $('cpList').insertAdjacentHTML('beforeend', `<div class="exBox"><div class="row" style="gap:6px">${ex.map(r => `<button data-ex="${r.id}" class="${r.id === exSel ? 'on' : ''}" style="flex:1;padding:10px 6px">${esc(r.n)}</button>`).join('')}</div>
+        <img src="course/r/${exSel}_l.jpg" alt="" style="width:100%;border-radius:8px;display:block"></div>`);
+      $('cpList').querySelectorAll('[data-ex]').forEach(b => b.onclick = () => { exSel = b.dataset.ex; renderCourse(); });
     }
     $('cpList').querySelectorAll('[data-i]').forEach(el => el.onclick = () => {
       const i = +el.dataset.i; cpSel = cpSel === i ? null : i;
