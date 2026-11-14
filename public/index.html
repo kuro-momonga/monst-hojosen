@@ -137,6 +137,7 @@
   body.pc #coursePanel{gap:12px}
   body.pc #cpList{height:auto;min-height:120px;max-height:none;flex:none}
   body.pc #cpTitle{white-space:nowrap}
+  body.pc #cpImg, body.pc #cpWatch, body.pc #cpZoom, body.pc #cpInfo{display:none !important}
   body.pc #coursePanel > .row:first-child{flex-wrap:wrap !important}
   body.pc #toast{top:16px}
   #pcBig{align-items:baseline;gap:12px}
@@ -158,7 +159,6 @@
   #pcLog .lg{display:flex;flex-wrap:wrap;gap:6px}
   #pcLog .lg span{background:#1c2029;border-radius:999px;padding:4px 10px;font-size:12px;color:#c9ced8}
   #pcInst{font-size:11px;color:#7fe3a8;font-weight:700}
-  #autoBtn.on{background:#1f5a3a;color:#bff5d3;border-color:#3ddc84}
   #stageLabel{position:absolute;right:8px;top:8px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:4px 8px;border-radius:8px;pointer-events:none;display:none}
 </style>
 </head>
@@ -179,7 +179,7 @@
   <div id="coursePanel">
     <div class="row" style="flex-wrap:nowrap;gap:6px">
       <button id="cpExit">✕</button><b id="cpTitle" style="font-size:14px"></b><button id="cpEdit">✎ 編集</button><span style="flex:1"></span>
-      <button id="cpImg">🖼 画像</button><button id="cpWatch" class="wbtn" style="display:none">🖥 自動</button><button class="bsShot bsb" style="display:none">📸 BS</button><button id="autoBtn" class="bsb" style="display:none" title="ターンが始まったら自動で取り込む">🔁 ターン自動</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button><button id="pcBtn" title="PC用の横並びレイアウト">⛶ PC</button>
+      <button id="cpImg">🖼 画像</button><button id="cpWatch" class="wbtn" style="display:none">🖥 自動</button><button class="bsShot bsb" style="display:none">📸 BS</button><button id="cpZoom">🔍</button><button id="cpInfo">要点</button>
     </div>
     <div id="pcInst" class="pcOnly"></div>
     <div id="cpStages"></div>
@@ -265,7 +265,7 @@
 
 <script>
 (() => {
-  const VERSION = '2.98';
+  const VERSION = '2.99';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2529,10 +2529,10 @@
     toast(ssArm ? 'SSで打ちます：🎯を押すと、顔をタップしてから同じ角度で引きます' : 'SSをやめました', 2500);
   }
   // ---- turn-start auto read (helper watches every instance; the portrait rising = a new turn)
-  let autoOn = false, autoRun = false; try { autoOn = localStorage.getItem('monst-bsAuto') === '1'; } catch (e) {}
+  let autoOn = false, autoRun = false;
   function renderInst() {
-    $('pcInst').textContent = autoOn && instState.length ? '🔁 自動取り込み中 ・ ' + instState.map((s, i) => `${i + 1}P ${s.ok ? (s.k ? ORD[s.k] : '待機') : '×'}`).join(' ／ ') : '';
-    $('autoBtn').classList.toggle('on', autoOn);
+    $('pcInst').textContent = !autoOn ? '' : instState.length ? '🔁 ターンが始まると自動で取り込みます ・ ' + instState.map((s, i) => `${i + 1}P ${s.ok ? (s.k ? ORD[s.k] : '待機') : '×'}`).join(' ／ ')
+      : '⚠ ヘルパーにつながっていません（start_helper.bat を起動してください。つながると自動で始まります）';
   }
   async function autoLoop() {
     if (autoRun) return; autoRun = true; let since = -1;
@@ -2541,18 +2541,13 @@
         const r = await fetch(BS + '/watch?since=' + since), j = await r.json();
         if (!j.ok) throw new Error(j.error || 'watch');
         instState = j.inst || []; renderInst();
+        if (!bsOn) bsStatus(true);
         if (since >= 0 && j.ev && autoOn) await bsCapture(j.ev.i);
         since = j.id;
       } catch (e) { instState = []; renderInst(); await new Promise(r => setTimeout(r, 3000)); }
     }
     autoRun = false; renderInst();
   }
-  $('autoBtn').onclick = () => {
-    if (bsInfo && !(bsInfo.ver >= 38)) { toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000); return; }
-    autoOn = !autoOn; try { localStorage.setItem('monst-bsAuto', autoOn ? '1' : '0'); } catch (e) {}
-    toast(autoOn ? 'ターンが始まったら自動で取り込みます（手番の顔がせり上がったとき）' : '自動取り込みを止めました', 2800);
-    renderInst(); if (autoOn) autoLoop();
-  };
   // ---- which stage / phase is on screen: compare the field with every reference map (moves forward only)
   const PHV = {};
   const fieldVec = (src, x, y, w, h) => {
@@ -2605,16 +2600,19 @@
   // ---- PC full screen (layout A)
   function setPc(on) {
     document.body.classList.toggle('pc', on);
-    try { localStorage.setItem('monst-pc', on ? '1' : '0'); } catch (e) {}
-    $('pcBtn').classList.toggle('on', on);
-    if (on) { renderTips(); renderLog(); renderFaces(); }
+    if (on) { renderTips(); renderLog(); renderFaces(); if (watchDir) stopWatch(); }
+    autoOn = on; renderInst(); if (on) autoLoop();
     setTimeout(layout, 60);
   }
-  // ⛶ = PC layout (field left, panel right) inside the normal browser window, so BlueStacks can stay visible beside it
-  $('pcBtn').onclick = () => setPc(!document.body.classList.contains('pc'));
+  // PC + フィロソフィア: always the side-by-side layout (BlueStacks stays visible beside the window) and turn-start auto read
+  function autoPc() {
+    const want = courseOn && !('ontouchstart' in window) && innerWidth >= 900;
+    if (want !== document.body.classList.contains('pc')) setPc(want);
+  }
+  window.addEventListener('resize', autoPc);
   { const rc = renderCourse; renderCourse = function () { rc(); if (document.body.classList.contains('pc')) renderTips(); renderFaces(); }; }
-  if (autoOn) setTimeout(() => { renderInst(); autoLoop(); }, 800);
-  try { if (localStorage.getItem('monst-pc') === '1') setTimeout(() => setPc(true), 50); } catch (e) {}
+  { const ec = enterCourse, xc = exitCourse; enterCourse = function (...a) { ec(...a); autoPc(); }; exitCourse = function () { xc(); autoPc(); }; $('cpExit').onclick = () => exitCourse(); }
+  setTimeout(autoPc, 50);
 
   document.getElementById('ver').textContent = 'v' + VERSION;
   window.addEventListener('resize', layout);
