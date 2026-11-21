@@ -192,6 +192,8 @@
   <div id="ceBar">
     <div class="row" style="flex-wrap:nowrap;gap:6px"><b id="ceTitle" style="flex:1;font-size:13px"></b><button id="ceCancel">やめる</button><button id="ceDone" class="on">保存</button></div>
     <div class="row" style="flex-wrap:nowrap;gap:6px"><button id="ceName">名前を変える</button><button id="ceReset">初期配置に戻す</button></div>
+    <div id="ceStages" class="row" style="gap:4px"></div>
+    <div id="cePhases" class="row" style="gap:4px"></div>
     <div class="small">敵をタップで選択・ドラッグで移動、右の点で大きさ。敵や地雷の追加・削除は下のボタン。保存すると、このステージ・段階で使うたびにこの配置になります</div>
   </div>
   <div id="coursePanel">
@@ -285,7 +287,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.16';
+  const VERSION = '3.17';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -522,7 +524,8 @@
     const e0 = S.enemies[k];
     // course edit: same kind of enemy = same size (all stages of the course)
     if (e0 && e0.k && e0.k !== '敵' && document.body.classList.contains('cedit')) {
-      S.enemies.forEach(o => { if (o.k === e0.k) o.R = e0.R; });
+      const kk = typeof kc === 'function' ? kc : (x => x);
+      S.enemies.forEach(o => { if (kk(o.k) === kk(e0.k)) o.R = e0.R; });
       if (typeof setTypeSize === 'function') setTypeSize(e0.k, e0.R);
     }
     const e = S.enemies[k]; if (!e || e.g == null || e.ax == null) return;
@@ -2274,8 +2277,8 @@
     const f = S.field, W = f.r - f.l, H = f.b - f.t;
     S.blocks = [];
     const TS = typeSizes(), KD = (OVR[curCourse.c] || {}).kinds || {};
-    S.enemies = ph ? ph.e.map(([k, x, y, R, bk]) => { const d = KD[kc(k)] || {}, K0 = (KINDS[curCourse.c] || {})[kc(k)];
-      return {x: f.l + x * W + (d.dx || 0) * W, y: f.t + y * H + (d.dy || 0) * W, R: (d.R || TS[kc(k)] || TS[k] || (K0 && kc(k) !== k ? K0.R : R)) * W, g: null, role: (bk || k === '本') ? 'book' : null, k, ref: [x, y, R]}; }) : [];
+    S.enemies = ph ? ph.e.map(([k, x, y, R, bk, own]) => { const d = KD[kc(k)] || {}, K0 = (KINDS[curCourse.c] || {})[kc(k)], o = own ? 0 : 1;   // own: placed by hand in the stage editor (no kind offset)
+      return {x: f.l + x * W + o * (d.dx || 0) * W, y: f.t + y * H + o * (d.dy || 0) * W, R: (d.R || TS[kc(k)] || TS[k] || (K0 && kc(k) !== k ? K0.R : R)) * W, g: null, role: (bk || k === '本') ? 'book' : null, k, ref: [x, y, R]}; }) : [];
     S.mines = ph ? ph.m.map(([x, y]) => ({x: f.l + x * W, y: f.t + y * H})) : [];
     persist();
   }
@@ -2391,19 +2394,32 @@
       fromRatio(ceSave.R); fitField(); applyLayout(); ballZoom = null;   // rescale ball etc. to this image
       document.body.classList.remove('course'); document.body.classList.add('cedit');
       $('ceTitle').textContent = `✎ ${cs.c.name} ${cs.st.n}${ph.n ? '・' + ph.n : ''}${(OVR[curCourse.c] || {})[ovrKey()] ? '（編集済み）' : ''}`;
-      setMode('place'); layout(); draw();
+      renderCeStages(); setMode('place'); layout(); draw();
     };
     im.onerror = () => toast('画像を読み込めませんでした', 2500);
     im.src = `course/map/${ph.id}.jpg`;
   }
-  function exitEdit(save) {
+  function renderCeStages() {   // switch stage / phase inside the editor (the current one is saved first)
+    const cs = courseStage(); if (!cs) return;
+    const go = (s, p) => { exitEdit(true, true); curCourse.s = s; curCourse.p = p; saveCourse(); toast('保存してから切り替えました', 1500); enterEdit(); };
+    $('ceStages').innerHTML = cs.c.stages.map((st, i) => `<button data-cs="${i}" class="${i === curCourse.s ? 'on' : ''}" style="padding:6px 8px;font-size:12px">${esc(st.n.replace(/ .*/, ''))}</button>`).join('');
+    $('ceStages').querySelectorAll('[data-cs]').forEach(b => b.onclick = () => { if (+b.dataset.cs !== curCourse.s) go(+b.dataset.cs, 0); });
+    const P = coursePhases();
+    $('cePhases').innerHTML = P.length > 1 ? P.map((ph, i) => `<button data-cp="${i}" class="${i === (curCourse.p || 0) ? 'on' : ''}" style="padding:6px 8px;font-size:12px">${esc(ph.n)}</button>`).join('') : '';
+    $('cePhases').querySelectorAll('[data-cp]').forEach(b => b.onclick = () => { if (+b.dataset.cp !== (curCourse.p || 0)) go(curCourse.s, +b.dataset.cp); });
+  }
+  function exitEdit(save, quiet) {
     if (save) {
       const f = S.field, W = f.r - f.l, H = f.b - f.t, r4 = v => Math.round(v * 1e4) / 1e4;
       (OVR[curCourse.c] = OVR[curCourse.c] || {})[ovrKey()] = {
-        e: S.enemies.map(e => [e.k || (e.role === 'book' ? '本' : '敵'), r4((e.x - f.l) / W), r4((e.y - f.t) / H), r4(e.R / W), e.role === 'book' ? 1 : 0]),
+        e: S.enemies.map(e => [e.k || (e.role === 'book' ? '本' : '敵'), r4((e.x - f.l) / W), r4((e.y - f.t) / H), r4(e.R / W), e.role === 'book' ? 1 : 0, 1]),
         m: S.mines.map(m => [r4((m.x - f.l) / W), r4((m.y - f.t) / H)])};
-      if (typeSizeDraft) OVR[curCourse.c].sizes = {...(OVR[curCourse.c].sizes || {}), ...typeSizeDraft};
-      saveOVR(); toast('保存しました。このステージ・段階ではこの配置を使います', 2500);
+      if (typeSizeDraft) {   // a size changed here = that enemy's size everywhere (the per-kind setting wins over the rest)
+        OVR[curCourse.c].sizes = {...(OVR[curCourse.c].sizes || {}), ...typeSizeDraft};
+        const KD = (OVR[curCourse.c].kinds = OVR[curCourse.c].kinds || {});
+        for (const k in typeSizeDraft) { const c = kc(k); KD[c] = {dx: 0, dy: 0, ...(KD[c] || {}), R: typeSizeDraft[k]}; }
+      }
+      saveOVR(); if (!quiet) toast('保存しました。このステージ・段階ではこの配置を使います', 2500);
     }
     typeSizeDraft = null;
     if (ceSave) { img = ceSave.img; IW = ceSave.IW; IH = ceSave.IH; labelCache = null; fromRatio(ceSave.R); if (img) fitField(); ceSave = null; }
