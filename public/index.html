@@ -291,7 +291,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.21';
+  const VERSION = '3.22';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -1059,7 +1059,7 @@
       const i = y * w + x, r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
       if (r > 150 && gg < 60 && b < 70 && r - gg > 90) red[i] = 1;      // saturated label red
       else if (r > 150 && gg > 95 && gg < 215 && b < 70 && r - b > 120) gold[i] = 1;   // gold labels (white outline)
-      else if (b > 180 && b - r > 110 && gg < 160 && b - gg > 60) blue[i] = 1;   // blue labels (white outline)
+      else if (b > 125 && b - r > 90 && gg < 160 && b - gg > 50) blue[i] = 1;   // blue labels (white outline; lower half of the glyphs is darker)
       else if (gg > 170 && r < 120 && b < 120 && gg - r > 100 && gg - b > 90) green[i] = 1;   // green labels (dark outline)
       row += (r > 150 && gg > 150 && b > 150) ? 1 : 0;                 // its (often tinted) white outline
       I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row;
