@@ -285,7 +285,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.15';
+  const VERSION = '3.16';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2259,11 +2259,12 @@
   let typeSizeDraft = null;
   function setTypeSize(k, R) { const f = S.field; (typeSizeDraft = typeSizeDraft || {})[k] = Math.round(R / (f.r - f.l) * 1e4) / 1e4; }
   // the same enemy registered under several names: one hitbox for all of them
-  const KALIAS = {philo: {'ド': '天', '中ボ': 'ボ', 'ボ1': 'ボ', 'ボ1覚': 'ボ', 'ボ2': 'ボ', 'ボ3': 'ボ', 'ボ3覚': 'ボ'}};
+  const KALIAS = {philo: {'ド': '天', 'ボ1': 'ボ', 'ボ1覚': 'ボ', 'ボ2': 'ボ', 'ボ3': 'ボ', 'ボ3覚': 'ボ'}};
   const kc = k => ((curCourse && KALIAS[curCourse.c]) || {})[k] || k;
   KINDS.philo['ボ'] = {...KINDS.philo['ボ1']};
   { // carry an earlier per-name setting over to the merged kind (first one found)
     for (const c in KALIAS) { const KD = (OVR[c] || {}).kinds; if (!KD) continue;
+      if (KD['ボ'] && KD['中ボ'] && JSON.stringify(KD['ボ']) === JSON.stringify(KD['中ボ']) && KD['ボ1']) KD['ボ'] = KD['ボ1'];   // v3.15 took the mid-boss by mistake
       for (const [a, b] of Object.entries(KALIAS[c])) if (KD[a] && !KD[b]) KD[b] = KD[a]; }
   }
   const typeSizes = () => ({...((OVR[curCourse.c] || {}).sizes || {}), ...(typeSizeDraft || {})});
