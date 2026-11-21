@@ -285,7 +285,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.14';
+  const VERSION = '3.15';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2258,6 +2258,14 @@
   // size per enemy kind for the whole course (✎ 編集で1体変えると同じ種類が全部変わる)
   let typeSizeDraft = null;
   function setTypeSize(k, R) { const f = S.field; (typeSizeDraft = typeSizeDraft || {})[k] = Math.round(R / (f.r - f.l) * 1e4) / 1e4; }
+  // the same enemy registered under several names: one hitbox for all of them
+  const KALIAS = {philo: {'ド': '天', '中ボ': 'ボ', 'ボ1': 'ボ', 'ボ1覚': 'ボ', 'ボ2': 'ボ', 'ボ3': 'ボ', 'ボ3覚': 'ボ'}};
+  const kc = k => ((curCourse && KALIAS[curCourse.c]) || {})[k] || k;
+  KINDS.philo['ボ'] = {...KINDS.philo['ボ1']};
+  { // carry an earlier per-name setting over to the merged kind (first one found)
+    for (const c in KALIAS) { const KD = (OVR[c] || {}).kinds; if (!KD) continue;
+      for (const [a, b] of Object.entries(KALIAS[c])) if (KD[a] && !KD[b]) KD[b] = KD[a]; }
+  }
   const typeSizes = () => ({...((OVR[curCourse.c] || {}).sizes || {}), ...(typeSizeDraft || {})});
   function applyLayout() {   // put the stage's enemies and mines on the field
     const P = coursePhases(), ph0 = P[Math.min(curCourse.p || 0, P.length - 1)];
@@ -2265,8 +2273,8 @@
     const f = S.field, W = f.r - f.l, H = f.b - f.t;
     S.blocks = [];
     const TS = typeSizes(), KD = (OVR[curCourse.c] || {}).kinds || {};
-    S.enemies = ph ? ph.e.map(([k, x, y, R, bk]) => { const d = KD[k] || {};
-      return {x: f.l + x * W + (d.dx || 0) * W, y: f.t + y * H + (d.dy || 0) * W, R: (d.R || TS[k] || R) * W, g: null, role: (bk || k === '本') ? 'book' : null, k, ref: [x, y, R]}; }) : [];
+    S.enemies = ph ? ph.e.map(([k, x, y, R, bk]) => { const d = KD[kc(k)] || {}, K0 = (KINDS[curCourse.c] || {})[kc(k)];
+      return {x: f.l + x * W + (d.dx || 0) * W, y: f.t + y * H + (d.dy || 0) * W, R: (d.R || TS[kc(k)] || TS[k] || (K0 && kc(k) !== k ? K0.R : R)) * W, g: null, role: (bk || k === '本') ? 'book' : null, k, ref: [x, y, R]}; }) : [];
     S.mines = ph ? ph.m.map(([x, y]) => ({x: f.l + x * W, y: f.t + y * H})) : [];
     persist();
   }
@@ -2405,7 +2413,7 @@
   function kindSheet() {
     const K = KINDS[curCourse.c] || {}, KD = ((OVR[curCourse.c] = OVR[curCourse.c] || {}).kinds = OVR[curCourse.c].kinds || {});
     let html = `<h3>✎ 敵の当たり判定（キャラ単位）</h3><div class="small">敵を選んで、丸の中心と大きさを合わせてください。保存すると、このコースの全ステージの同じ敵に反映されます</div><div class="kgrid">`;
-    Object.keys(K).forEach(k => html += `<button data-kd="${esc(k)}"><img src="course/kind/${K[k].img}.jpg" alt=""><span>${esc(k)}${KD[k] ? ' ✓' : ''}</span></button>`);
+    Object.keys(K).filter(k => kc(k) === k).forEach(k => html += `<button data-kd="${esc(k)}"><img src="course/kind/${K[k].img}.jpg" alt=""><span>${esc(k)}${KD[k] ? ' ✓' : ''}</span></button>`);
     html += `</div><button id="kStage">ステージ単位で直す（位置の微調整）</button><button id="closeS">閉じる</button>`;
     openSheet(html, sh => {
       sh.querySelectorAll('[data-kd]').forEach(b => b.onclick = () => kindEditor(b.dataset.kd));
