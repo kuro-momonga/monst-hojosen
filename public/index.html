@@ -287,7 +287,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.17';
+  const VERSION = '3.18';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2061,13 +2061,13 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 47)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 48)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
     const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
     const gt = gArm && FACES ? FACES.gtap : null;
     if ((ssArm && !ss) || (gArm && !gt)) { toast('顔の位置がわかりません。画面を取り込み直してください', 3000); return; }
     toast(`🎯 ${displayAngle()}° で${gt ? '守護獣を使って' : ''}${ss ? 'SSを発動して' : ''}${bsWander() ? '寄り道しながら' : 'ゆっくり'}引いています…`, bsMs() + (ss ? 1000 : 600) + (gt ? 500 : 0));
     try {
-      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 150, wander: bsWander(), method: bsMethod(), rot: bsRot(), ss, g: gt})});
+      const r = await fetch(BS + '/shoot', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({angle: S.angle, ms: bsMs(), hold: 100, wander: bsWander(), method: bsMethod(), rot: bsRot(), ss, g: gt})});
       const j = await r.json(); if (!j.ok) throw new Error(j.error);
       addLog({k: turnK, ang: displayAngle(), ss: !!ss, g: !!gt}); ssArm = false; gArm = false; renderFaces();
       bsLast = {angle: +displayAngle(), how: j.how, from: j.from, to: j.to, dev_from: j.dev_from, dev_to: j.dev_to};

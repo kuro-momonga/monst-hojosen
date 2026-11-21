@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 47
+HELPER_VER = 48
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -249,9 +249,9 @@ class Adb:
                     dt2 += rng.uniform(.05, .2)   # tiny hesitation
                 out.append((min(w - 5, max(5, x + g * nx)), min(h - 5, max(5, y + g * ny)), dt2))
             path = out
-        if wander:   # same moves, played fast: the whole aiming takes about 1.3-1.9 s (shot ~2-3 s after the button)
+        if wander:   # same moves, played fast: the whole aiming takes about 0.65-0.95 s
             T = sum(dt for _, _, dt in path) or 1
-            K = rng.uniform(1.3, 1.9) / T
+            K = rng.uniform(.65, .95) / T
             path = [(x, y, dt * K) for x, y, dt in path]
         path.append((ex, ey, hold / 1000))
 
@@ -685,10 +685,10 @@ def make_handler(adbs):
                             g = q.get("g")   # guardian beast first (its attack plays), then the strike shot, then the pull
                             if g:
                                 A.tap(float(g[0]), float(g[1]), seed)
-                                time.sleep(random.Random(seed).uniform(.3, .45))   # like the strike shot: just armed, no waiting
+                                time.sleep(random.Random(seed).uniform(.2, .3))   # like the strike shot: just armed, no waiting
                             if ss:
                                 A.tap(float(ss[0]), float(ss[1]), seed)
-                                time.sleep(random.Random(seed).uniform(.35, .55))
+                                time.sleep(random.Random(seed).uniform(.2, .3))
                             res[i] = A.shoot(float(q["angle"]), q.get("cx", w / 2), q.get("cy", h * .45), float(q.get("ms", 1200)),
                                              float(q.get("hold", 400)), bool(q.get("wander")), q.get("method", "auto"), seed)
                         except Exception as e:
