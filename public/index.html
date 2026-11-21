@@ -287,7 +287,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.18';
+  const VERSION = '3.19';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -855,18 +855,29 @@
       ctx.fillStyle = segColor(i); ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#111'; ctx.fillText(i, x, y + .5);
     }
-    // arrow on first segment
+    // Monst-style shot arrow on the first segment: a fat tapered arrow from the ball with a big head
     if (sp.length > 1) {
       const [x0, y0] = sp[0], [x1, y1] = sp[1];
-      const L = Math.hypot(x1 - x0, y1 - y0);
-      if (L > 30) {
-        const ux = (x1 - x0) / L, uy = (y1 - y0) / L;
-        const ax = x0 + ux * Math.min(L * .5, 90), ay = y0 + uy * Math.min(L * .5, 90);
-        ctx.fillStyle = segColor(0); ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.beginPath();
-        ctx.moveTo(ax + ux * 11, ay + uy * 11);
-        ctx.lineTo(ax - ux * 7 - uy * 8, ay - uy * 7 + ux * 8);
-        ctx.lineTo(ax - ux * 7 + uy * 8, ay - uy * 7 - ux * 8);
-        ctx.closePath(); ctx.stroke(); ctx.fill();
+      const L = Math.hypot(x1 - x0, y1 - y0), rb = S.r * scale;
+      if (L > rb + 20) {
+        const ux = (x1 - x0) / L, uy = (y1 - y0) / L, nx = -uy, ny = ux;
+        const st = rb * .9, len = Math.min(L - st, Math.max(170, rb * 6)), hw = Math.max(24, rb * 1.05), hl = hw * 1.35, sw0 = hw * .38, sw1 = hw * .6;
+        const P = (d, w) => [x0 + ux * d + nx * w, y0 + uy * d + ny * w];
+        const pts2 = [P(st, sw0), P(st + len - hl, sw1), P(st + len - hl, hw), P(st + len, 0), P(st + len - hl, -hw), P(st + len - hl, -sw1), P(st, -sw0)];
+        const shape = () => { ctx.beginPath(); pts2.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); };
+        ctx.globalAlpha = mode === 'arrow' ? .5 : 1;
+        const gr = ctx.createLinearGradient(...P(st, 0), ...P(st + len, 0));
+        gr.addColorStop(0, 'rgba(70,180,255,.8)'); gr.addColorStop(.55, 'rgba(150,230,255,.95)'); gr.addColorStop(1, '#ffffff');
+        ctx.shadowColor = 'rgba(60,190,255,.9)'; ctx.shadowBlur = 14;
+        shape(); ctx.fillStyle = gr; ctx.fill(); ctx.shadowBlur = 0;
+        ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = '#0b2a4a'; shape(); ctx.stroke();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.9)'; shape(); ctx.stroke();
+        // chevrons running along the shaft
+        ctx.strokeStyle = 'rgba(20,90,160,.75)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        for (let d = st + hw * .7; d < st + len - hl - 4; d += hw * .75) {
+          const w = sw0 + (sw1 - sw0) * (d - st) / Math.max(1, len - hl) - 3;
+          ctx.beginPath(); ctx.moveTo(...P(d - hw * .25, w)); ctx.lineTo(...P(d, 0)); ctx.lineTo(...P(d - hw * .25, -w)); ctx.stroke();
+        }
       }
     }
     ctx.restore();
