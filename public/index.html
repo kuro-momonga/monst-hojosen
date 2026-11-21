@@ -82,6 +82,7 @@
   #cpFree.on, #cpArrow.on{background:var(--accent);color:#111}
   .bsFire{background:#ff2f6d !important;color:#fff !important;font-weight:700}
   .bsFire.armed{background:repeating-linear-gradient(135deg,#b4006a 0 14px,#ff2f6d 14px 28px) !important;box-shadow:0 0 0 4px #ffcf3f,0 0 22px #ff2f6d}
+  #aLoupe{position:static;inset:auto;width:100%;height:280px;border-radius:12px;border:2px solid #2a2f3a;background:#0f1115;flex:none}
   #armBar{min-height:46px;align-items:center;justify-content:center;gap:10px;border-radius:10px;font-weight:800;font-size:17px;border:2px dashed #3a4252;color:#6b7383}
   #armBar.on{border:3px solid #ffcf3f;background:#5a0b3a;color:#fff;animation:armBlink 1s infinite}
   #armBar button{padding:6px 12px;font-size:13px}
@@ -214,6 +215,7 @@
       <span style="flex:1"></span><button id="cpFree">✍ 自由に狙う</button><button id="cpArrow">➶ 矢印</button><button class="bsFire bsb" style="display:none">🎯 打つ</button>
     </div>
     <div id="cpFreeInfo" class="small" style="display:none"></div>
+    <canvas id="aLoupe" class="pcOnly"></canvas>
     <div id="cpList"></div>
     <div id="pcTips" class="pcBox pcOnly"></div>
     <div id="pcLog" class="pcBox" style="display:none"></div>
@@ -287,7 +289,7 @@
 
 <script>
 (() => {
-  const VERSION = '3.19';
+  const VERSION = '3.20';
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -973,6 +975,7 @@
     // loupe while dragging
     if (mode === 'finger') drawFingerMode();
     else if (mode === 'arrow') drawArrowMode(pts);
+    if (mode !== 'arrow') drawFixedLoupe(null);
     else if (padFocus) { const [fx, fy] = toS(padFocus[0], padFocus[1]); drawLoupe(fx, fy); }
     else if (dragInfo && dragInfo.kind !== 'pull' && dragInfo.kind !== 'pending') drawLoupe(dragInfo.sx, dragInfo.sy);
 
@@ -1375,6 +1378,7 @@
     ctx.restore();
     // background loupe at the tip (raw screenshot, no overlays)
     if (!img) return;
+    if (drawFixedLoupe([tx, ty], a)) return;   // PC: a fixed, wider area in the panel
     const size = 170, zoom = 1.6, src = size / zoom / scale;   // image px shown
     const w = cv.clientWidth, lx = stx < w / 2 ? w - size - 10 : 10, ly = 10;
     ctx.save();
@@ -1392,6 +1396,26 @@
     ctx.beginPath(); ctx.arc(lx + size / 2, ly + size / 2, size / 2, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
   }
 
+  // PC layout: the arrow-mode magnifier in a fixed box of the panel (same zoom as the round one, wider view)
+  function drawFixedLoupe(t, a) {
+    const c = document.getElementById('aLoupe');
+    if (!c || !document.body.classList.contains('pc') || !c.clientWidth) return false;
+    const W = c.clientWidth, H = c.clientHeight;
+    if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    if (!t || !img) {
+      g.fillStyle = '#5b6372'; g.font = 'bold 15px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('🔍 矢印モードで、矢印の先を拡大表示', W / 2, H / 2); return true;
+    }
+    const zoom = 1.6, sw = W / zoom / scale, sh = H / zoom / scale, [tx, ty] = t;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(img, tx - sw / 2, ty - sh / 2, sw, sh, 0, 0, W, H);
+    const cx = W / 2, cy = H / 2, L = Math.hypot(W, H);
+    g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1.5; g.setLineDash([5, 5]);
+    g.beginPath(); g.moveTo(cx - Math.cos(a) * L, cy - Math.sin(a) * L); g.lineTo(cx + Math.cos(a) * L, cy + Math.sin(a) * L); g.stroke(); g.setLineDash([]);
+    g.strokeStyle = '#ffd43b'; g.lineWidth = 2.5; g.beginPath(); g.arc(cx, cy, 8, 0, Math.PI * 2); g.stroke();
+    return true;
+  }
   function drawLoupe(sx, sy) {
     const size = 150, zoom = 1.7;
     const src = size / zoom;
