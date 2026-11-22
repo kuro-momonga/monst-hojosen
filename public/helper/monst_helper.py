@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 52
+HELPER_VER = 53
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -881,7 +881,7 @@ class Shuka:
         return n > t * .5
 
     def loop(self, i, A):
-        st = self.inst[i]; prev_sig = None
+        st = self.inst[i]; prev_sig = None; waits = 0
         while True:
             time.sleep(random.uniform(2.5, 4.0))
             if not self.on:
@@ -892,8 +892,10 @@ class Shuka:
                 state, note, how, sig = self.classify(data, off, w, h)
                 st["png"] = png_small(data, off, w, h); st["t"] = time.time(); st["sig"] = sig
                 if state is None:
-                    if prev_sig is None or sig_dist(sig, prev_sig) > .03:      # wait until the screen holds still
-                        prev_sig = sig; st.update(state="?", note="判定中（画面が落ち着くのを待っています）", how=""); continue
+                    # wait a little for the screen to hold still (an animated screen like home never does: ask anyway after 2 tries)
+                    if (prev_sig is None or sig_dist(sig, prev_sig) > .05) and waits < 2:
+                        prev_sig = sig; waits += 1; st.update(state="?", note="判定中（画面が落ち着くのを待っています）", how=""); continue
+                    waits = 0
                     state, note = ask_claude_state(png_small(data, off, w, h, 2))
                     if state is not None:
                         with self.lock: self.ai_calls += 1
