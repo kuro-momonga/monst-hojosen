@@ -13,11 +13,12 @@
 
 必要なもの: Python 3（標準ライブラリだけで動きます）、adb（BlueStacks 付属の HD-Adb.exe を自動で探します）
 """
+import re
 import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 64
+HELPER_VER = 65
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -856,6 +857,64 @@ def _count(j):
     AI_USE["out"] += int(u.get("output_tokens", 0))
 
 
+SHUKA_GROUPS = os.path.join(HERE, "shuka_groups.json")
+GROUP_ORDER = ["極", "究極", "究極★5以下制限", "激究極"]      # the groups we clear, in this order (others are harder or multi-only)
+
+
+def png_crop(data, off, w, h, x0, y0, x1, y1, step=1):
+    import zlib
+    xa, xb, ya, yb = int(w * x0), int(w * x1), int(h * y0), int(h * y1)
+    raw = bytearray(); W = len(range(xa, xb, step)); H = 0
+    for y in range(ya, yb, step):
+        raw.append(0); o = off + y * w * 4; H += 1
+        for x in range(xa, xb, step):
+            i = o + x * 4; raw += data[i:i + 3]
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b"")
+
+
+HEAD_BOX = (0, .40, .55, .50)      # where the list's group heading (黎絶 / 極 ...) sits, left side under the search box
+
+
+def head_bits(data, off, w, h):
+    """white text of the heading area as a 28x8 grid of 'how much white' (the art behind it does not matter much)"""
+    x0, y0, x1, y1 = HEAD_BOX; out = []
+    for gy in range(8):
+        ya = int(h * (y0 + (y1 - y0) * gy / 8)); yb = int(h * (y0 + (y1 - y0) * (gy + 1) / 8))
+        for gx in range(28):
+            xa = int(w * (x0 + (x1 - x0) * gx / 28)); xb = int(w * (x0 + (x1 - x0) * (gx + 1) / 28)); n = t = 0
+            for y in range(ya, max(ya + 1, yb), 2):
+                o = off + y * w * 4
+                for x in range(xa, max(xa + 1, xb), 2):
+                    i = o + x * 4; t += 1
+                    if data[i] > 205 and data[i + 1] > 205 and data[i + 2] > 205: n += 1
+            out.append(n / max(1, t))
+    return out
+
+
+def norm_group(t):
+    t = re.sub(r"[\s　・\d]", "", t or "").replace("☆", "★").replace("星", "★")
+    return t
+
+
+def ask_claude_head(png):
+    import base64, urllib.request
+    key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
+    if not key: return None
+    body = {"model": SHUKA_MODEL, "max_tokens": 200, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": "モンストの「追憶の書庫」一覧の一部です。一番上に見えているグループ見出しの文字（例：黎絶、轟絶、爆絶、超絶、超究極、超究極・封、究極、究極 ★5以下制限、極、極 マルチ専用、激究極）を、見出しの文字だけ1行で答えてください。右の数字はいりません。見出しが無ければ none。"}]}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            j = json.loads(r.read()); _count(j)
+        t = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text").strip().splitlines()
+        return t[0].strip() if t else None
+    except Exception:
+        return None
+
+
 def ask_claude_state(png):
     """unknown screen -> ask Claude (Haiku) which screen it is. Returns (state, note, raw text)"""
     import base64, urllib.request, urllib.error
@@ -1008,7 +1067,7 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - ホーム画面：この周回でまだ書庫のクエストを1つもクリアしていなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップし、クエスト一覧で「追憶の書庫」を押す。ボタン上部の「SHORT CUT」の矢印のあたりや長押しは、関係ない前回のクエスト（禁忌の獄など）へ飛ぶので使わない。間違って書庫以外に入ったら、左上の青い戻る矢印やホームボタンで戻る。書庫のクエストを1つ以上クリアした後は「クエスト」を約1秒長押しする（さっきの書庫クエストの詳細へ飛ぶので、左上の戻る矢印で書庫の一覧に戻る）。
 - クエスト一覧では「追憶の書庫」を押す。
 - 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
-- 書庫の一覧は上から難しい順（黎絶・轟絶・爆絶・超絶…）に並んでいて、極・究極などは一番下のほうにある。極 → 究極 → ★5制限 → 激究極 のグループの順に、そのグループの一番上のクエストを選ぶ。見えなければ下へスクロールする（swipe で y2 を y より小さく。スクロールはプログラムが一番下まで一気に行う）。一番下までスクロール済みで、超絶以上の難しいグループしか残っていないときだけ止める（stop）。
+- 書庫の一覧：どのグループを遊ぶかはプログラムがスクロールバーで一覧を全部見て決め、流れ（履歴）で伝える。伝えられたグループの見出しのすぐ下、一番左上のクエストを押す。まだ伝えられていなければ swipe と答える（プログラムが一覧を見に行く）。自分で stop しない。
 - クエスト詳細では、一番上の難易度を押す。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上を押す。
 - デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間）を左右にスワイプして切り替える。合っていれば「出撃」。
@@ -1086,9 +1145,69 @@ class ShukaAuto:
         self.info = [{"msg": "停止中", "steps": 0, "clears": 0, "hist": [], "quest": ""} for _ in adbs]
         try: self.log = json.load(open(SHUKA_LOG, encoding="utf-8"))
         except Exception: self.log = []
+        try: self.groups = json.load(open(SHUKA_GROUPS, encoding="utf-8"))
+        except Exception: self.groups = []
         import threading
         for i, A in enumerate(adbs):
             threading.Thread(target=self.loop, args=(i, A), daemon=True).start()
+
+    def thumb(self, A):
+        """the list's scrollbar knob on the right edge: (x, y of its middle, track top, track bottom) or None"""
+        data, off, w, h = A.raw_frame()
+        xa, xb = int(w * .978), int(w * .996); ys = []; xs = []
+        for y in range(int(h * .232), int(h * .868)):
+            o = off + y * w * 4; hit = []
+            for x in range(xa, xb):
+                i = o + x * 4
+                if min(data[i], data[i + 1], data[i + 2]) > 85: hit.append(x)
+            if len(hit) >= (xb - xa) * .5: ys.append(y); xs.append(sum(hit) / len(hit))
+        runs = []
+        for y in ys:
+            if runs and y - runs[-1][1] <= 4: runs[-1][1] = y
+            else: runs.append([y, y])
+        runs = [r for r in runs if h * .012 < r[1] - r[0] < h * .2]
+        if not runs: return None
+        r = max(runs, key=lambda r: r[1] - r[0]); ln = r[1] - r[0]
+        x = round(sum(xs) / len(xs)); y = (r[0] + r[1]) / 2
+        return x, y, h * .232 + ln / 2, h * .868 - ln / 2
+
+    def drag_to(self, A, ty):
+        t = self.thumb(A)
+        if not t: return False
+        x, y, _, _ = t
+        A.run("shell", "input", "swipe", *map(str, (x, round(y), x + random.randint(-2, 2), round(ty), round(random.uniform(600, 900)))), timeout=15)
+        time.sleep(random.uniform(.9, 1.4)); return True
+
+    def head(self, A):
+        """the group heading now on top of the list: learned look, else ask the AI once and remember"""
+        data, off, w, h = A.raw_frame()
+        bits = head_bits(data, off, w, h)
+        if sum(bits) < .2: return None
+        best = min(self.groups, key=lambda G: sum(abs(p - q) for p, q in zip(bits, G["bits"])) / len(bits), default=None)
+        if best and sum(abs(p - q) for p, q in zip(bits, best["bits"])) / len(bits) < .035:
+            return best["name"]
+        name = ask_claude_head(png_crop(data, off, w, h, *HEAD_BOX))
+        with self.sh.lock: self.sh.ai_calls += 1
+        if not name or "none" in name.lower(): return None
+        name = norm_group(name)
+        self.groups.append({"name": name, "bits": [round(v, 3) for v in bits]})
+        try: json.dump(self.groups, open(SHUKA_GROUPS, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception: pass
+        return name
+
+    def survey(self, A):
+        """drag the scrollbar from top to bottom in small steps; note where each group heading first shows up"""
+        t = self.thumb(A)
+        if not t: return []
+        _, _, top, bot = t
+        self.drag_to(A, top)
+        found = []; n = 28
+        for s in range(n + 1):
+            ty = top + (bot - top) * s / n
+            if s: self.drag_to(A, ty)
+            g = self.head(A)
+            if g and (not found or found[-1][1] != g): found.append((ty, g))
+        return found
 
     def act(self, A, a, k, seed):
         rng = random.Random(seed); kind = a["action"]
@@ -1134,8 +1253,6 @@ class ShukaAuto:
                 same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
                 if same >= 15:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
-                if inf.get("_scroll"):
-                    inf["_scroll"] = None
                 # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
                 ctx = "after" if inf["clears"] else "first"
                 L = min((L for L in self.sh.learn if L.get("act") and L["act"].get("ctx", ctx) == ctx), key=lambda L: sig_dist(sig, L["sig"]), default=None)
@@ -1145,7 +1262,7 @@ class ShukaAuto:
                     if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
                         with self.sh.lock: L.pop("act", None); self.sh.save()
                     hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else []) \
-                        + (["※ 書庫の一覧は一番下までスクロール済み（これ以上下はない）"] if inf.get("bottom") else [])
+
                     a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
                     with self.sh.lock: self.sh.ai_calls += 1
                     if not a:
@@ -1160,24 +1277,32 @@ class ShukaAuto:
                             self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, ctx=ctx); self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
                 if st != "shuka_list":
-                    inf["bottom"] = False
-                elif a["action"] == "stop" and not inf.get("bottom"):     # never give up on the list before having seen its bottom
-                    a = {"action": "swipe", "state": st, "y": 1, "y2": 0}; why = "まだ一番下を見ていないのでスクロール"
-                if st == "shuka_list" and a["action"] == "swipe" and float(a.get("y2", 0) or 0) <= float(a.get("y", 1) or 1):
-                    # scrolling down the list: done here with long drags until it stops moving (no AI per drag)
-                    inf["msg"] = "書庫の一覧を下までスクロール中"; print(f"書庫自動 {A.serial}: {inf['msg']}")
-                    time.sleep(random.uniform(.6, 1.5))
-                    for _ in range(10):
-                        before = list_sig(*A.raw_frame())
-                        x0 = w * random.uniform(.42, .6)
-                        A.run("shell", "input", "swipe", *map(str, (round(x0), round(h * random.uniform(.80, .86)), round(x0 + random.uniform(-25, 25)),
-                              round(h * random.uniform(.26, .32)), round(random.uniform(420, 650)))), timeout=15)
-                        time.sleep(random.uniform(1.0, 1.8))
-                        if sig_dist(list_sig(*A.raw_frame()), before) < .015:
-                            break
-                    inf["bottom"] = True; inf["steps"] += 1
-                    inf["hist"] = (inf["hist"] + ["書庫の一覧を一番下までスクロールした"])[-14:]
+                    if st not in ("other", "loading", "dialog"): inf["pick"] = None
+                elif not inf.get("pick") and (a["action"] in ("swipe", "stop") or (a["action"] == "tap" and float(a.get("y", 0) or 0) * kk > h * .42)):
+                    # which quest to play: look through the whole list with the scrollbar, reading the group heading on the left
+                    inf["msg"] = "書庫の一覧を見ています（スクロールバー）"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+                    found = self.survey(A)
+                    groups = [g for _, g in found]
+                    print(f"書庫自動 {A.serial}: 一覧のグループ → {' / '.join(dict.fromkeys(groups)) or '読めませんでした'}")
+                    target = next((G for G in GROUP_ORDER if G in groups), None)
+                    if not found:
+                        inf["pick"] = {"group": "?"}; inf["hist"] = (inf["hist"] + ["スクロールバーで一覧を見られなかった"])[-14:]; continue
+                    if not target:
+                        self.run[i] = False; inf["msg"] = "止めました：残りは " + "・".join(dict.fromkeys(groups)) + "（超絶以上かマルチ専用）"
+                        print(f"書庫自動 {A.serial}: {inf['msg']}"); continue
+                    idx = groups.index(target)
+                    self.drag_to(A, found[max(0, idx - 1)][0])       # one step before: the heading row of the group is in view
+                    inf["pick"] = {"group": target}; inf["steps"] += 1
+                    inf["hist"] = (inf["hist"] + [f"一覧を全部見た。次は「{target}」グループ。その見出しのすぐ下の一番左上のクエストを押す（見出しが見えなければ少しだけ下へswipe）"])[-14:]
                     continue
+                elif a["action"] == "stop" and (inf.get("pick") or {}).get("group") not in (None, "?"):
+                    a = {"action": "swipe", "state": st, "x": w / 4, "y": h * .75 / 2, "x2": w / 4, "y2": h * .55 / 2}; why = "グループを探して少しスクロール"
+                if st == "shuka_list" and a["action"] == "swipe":    # gentle, slow finger scroll (no fling)
+                    x0 = w * random.uniform(.35, .6); dy = max(-.35, min(.35, (float(a.get("y2", 0) or 0) - float(a.get("y", 0) or 0)) * kk / h)) or -.2
+                    y0 = h * (.72 if dy < 0 else .5)
+                    A.run("shell", "input", "swipe", *map(str, (round(x0), round(y0), round(x0 + random.uniform(-15, 15)), round(y0 + dy * h), round(random.uniform(900, 1300)))), timeout=15)
+                    inf["steps"] += 1; inf["hist"] = (inf["hist"] + ["一覧を少しスクロールした"])[-14:]
+                    time.sleep(random.uniform(1, 1.8)); continue
                 if a.get("quest") and st in ("quest_detail", "helper_select", "deck_select", "loading"): inf["quest"] = str(a["quest"])[:40]
                 inf["msg"] = f"{st}：{a['action']}（{how}）{why}"
                 print(f"書庫自動 {A.serial}: {inf['msg']}")
