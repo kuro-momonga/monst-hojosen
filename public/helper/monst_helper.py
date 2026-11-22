@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 59
+HELPER_VER = 60
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -984,7 +984,7 @@ class Shuka:
 # ======================= 書庫周回（段階2：自動で回す。画面ごとの操作はAIが決め、決まった操作は覚える） =======================
 SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク」をプレイしています。目的は「追憶の書庫」で、まだクリア報酬（オーブ）を受け取っていないクエストを1つずつクリアしていくことです。
 ルール：
-- ホーム画面では、真ん中の大きな「クエスト」ボタンを普通にタップする（長押ししない。長押しすると関係ない前回のクエストへ飛ぶ）。
+- ホーム画面：この周回でまだ書庫のクエストを1つもクリアしていなければ、真ん中の「クエスト」を普通にタップし、クエスト一覧で「追憶の書庫」を押す（長押しすると関係ない前回のクエストへ飛ぶため）。書庫のクエストを1つ以上クリアした後は「クエスト」を約1秒長押しする（さっきの書庫クエストの詳細へ飛ぶので、左上の戻る矢印で書庫の一覧に戻る）。
 - クエスト一覧では「追憶の書庫」を押す。
 - 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
 - 書庫の一覧では、極 → 究極 → ★5制限 → 激究極 のグループの順に、一番上のクエストを選ぶ。見えなければ下へスクロールする。超絶など、それより難しいグループしか残っていなければ止める（stop）。
@@ -1117,13 +1117,13 @@ class ShukaAuto:
                 else:
                     if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
                         with self.sh.lock: L.pop("act", None); self.sh.save()
-                    hist = inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+                    hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
                     a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
                     with self.sh.lock: self.sh.ai_calls += 1
                     if not a:
                         inf["msg"] = "AI：" + err; time.sleep(8); continue
                     how = "AI"; kk = 2
-                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "quest_detail", "deck_select", "filter", "quest_list", "battle", "other"):
+                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("home", "shuka_list", "quest_detail", "deck_select", "filter", "quest_list", "battle", "other"):
                         with self.sh.lock:      # always the same tap on this screen: remember it
                             self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
                             self.sh.learn[-1]["act"] = {x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}; self.sh.save()
@@ -1137,7 +1137,8 @@ class ShukaAuto:
                 time.sleep(random.uniform(2, 15))                       # human-like pause before acting
                 self.act(A, a, kk, random.random())
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
-                if st == "result": inf["clears"] += 0.25
+                if st == "result" and not inf.get("_res"): inf["clears"] += 1
+                inf["_res"] = st == "result"
                 time.sleep(random.uniform(1.5, 3))
             except Exception as e:
                 inf["msg"] = "エラー：" + str(e)[:80]; time.sleep(5)
