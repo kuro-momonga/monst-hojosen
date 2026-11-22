@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 60
+HELPER_VER = 61
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -652,7 +652,7 @@ def make_handler(adbs):
                 if self.path.rstrip("/") == "/shuka":
                     return self.reply(200, SHUKA_PAGE.encode(), "text/html; charset=utf-8")
                 if self.path.startswith("/shuka/state"):
-                    return self.reply(200, {**SH.status(), "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k != "hist"}} for i in range(len(adbs))]})
+                    return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k != "hist"}} for i in range(len(adbs))]})
                 if self.path.startswith("/shuka/limg"):
                     from urllib.parse import urlparse, parse_qs
                     lid = "".join(ch for ch in (parse_qs(urlparse(self.path).query).get("id") or [""])[0] if ch.isdigit())
@@ -792,6 +792,7 @@ SHUKA_STATES = {
     "other": "上のどれでもない画面",
 }
 SHUKA_FILE = os.path.join(HERE, "shuka_learn.json")
+SHUKA_LOG = os.path.join(HERE, "shuka_clears.json")
 SHUKA_IMG = os.path.join(HERE, "shuka_img")
 SHUKA_MODEL = "claude-haiku-5-5"
 KEY_FILE = None   # set in main()
@@ -998,7 +999,8 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - 分からない・危ない画面では stop。
 """
 SHUKA_ACT_FMT = """次の操作を1つ決めて、JSONだけで答えてください（説明文は不要）。座標はこの画像のピクセル（左上が0,0、幅{W}、高さ{H}）。
-{{"state":"<画面の名前: {states}>","action":"tap|longpress|swipe|wait|back|stop","x":0,"y":0,"x2":0,"y2":0,"why":"20文字以内","fixed":true}}
+{{"state":"<画面の名前: {states}>","action":"tap|longpress|swipe|wait|back|stop","x":0,"y":0,"x2":0,"y2":0,"why":"20文字以内","fixed":true,"quest":""}}
+- quest は画面にクエスト名が見えていればその名前（見えなければ空）。
 - tap / longpress は押す点の中心。swipe は (x,y) から (x2,y2) へ。
 - fixed は「この画面ならいつも同じ場所を押せばいい」なら true、そのときの中身（どのクエストか等）で押す場所が変わるなら false。
 これまでの流れ（古い順）: {hist}
@@ -1061,7 +1063,9 @@ class ShukaAuto:
     def __init__(self, sh, adbs):
         self.sh, self.adbs = sh, adbs
         self.run = [False] * len(adbs)
-        self.info = [{"msg": "停止中", "steps": 0, "clears": 0, "hist": []} for _ in adbs]
+        self.info = [{"msg": "停止中", "steps": 0, "clears": 0, "hist": [], "quest": ""} for _ in adbs]
+        try: self.log = json.load(open(SHUKA_LOG, encoding="utf-8"))
+        except Exception: self.log = []
         import threading
         for i, A in enumerate(adbs):
             threading.Thread(target=self.loop, args=(i, A), daemon=True).start()
@@ -1128,6 +1132,7 @@ class ShukaAuto:
                             self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
                             self.sh.learn[-1]["act"] = {x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}; self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
+                if a.get("quest") and st in ("quest_detail", "helper_select", "deck_select", "loading"): inf["quest"] = str(a["quest"])[:40]
                 inf["msg"] = f"{st}：{a['action']}（{how}）{why}"
                 print(f"書庫自動 {A.serial}: {inf['msg']}")
                 if a["action"] == "stop":
@@ -1137,7 +1142,11 @@ class ShukaAuto:
                 time.sleep(random.uniform(2, 15))                       # human-like pause before acting
                 self.act(A, a, kk, random.random())
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
-                if st == "result" and not inf.get("_res"): inf["clears"] += 1
+                if st == "result" and not inf.get("_res"):
+                    inf["clears"] += 1
+                    self.log.append({"t": time.strftime("%m/%d %H:%M"), "i": i + 1, "quest": inf.get("quest") or "（名前不明）", "orb": 1})
+                    try: json.dump(self.log, open(SHUKA_LOG, "w", encoding="utf-8"), ensure_ascii=False)
+                    except Exception: pass
                 inf["_res"] = st == "result"
                 time.sleep(random.uniform(1.5, 3))
             except Exception as e:
@@ -1155,6 +1164,7 @@ main{display:flex;gap:16px;flex-wrap:wrap;padding:16px}.c{background:#171a21;bor
 </style></head><body><header><h1>書庫周回</h1>
 <button id="run">判定を始める</button><span id="info" class="small"></span><span style="flex:1"></span>
 <span id="keybox" class="small"></span></header><main id="m"></main>
+<h2 style="font-size:15px;margin:8px 16px" id="lh"></h2><div id="LG" style="margin:0 16px;font-size:13px;line-height:1.8;max-height:260px;overflow:auto;background:#171a21;border:1px solid #2a2f3a;border-radius:10px;padding:8px 12px"></div>
 <h2 style="font-size:15px;margin:8px 16px">覚えた画面（違っていたら直す・消す）</h2><main id="L"></main><script>
 let S=null;const $=id=>document.getElementById(id);
 async function post(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
@@ -1172,6 +1182,8 @@ $('m').innerHTML=S.inst.map((s,i)=>`<div class="c"><div class="small">${i+1}画�
 <div class="small">違っていたら直す：</div><select data-i="${i}"><option value="">選ぶ…</option>${opts}</select></div>`).join('');
 document.querySelectorAll('button[data-a]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.a;await post('/shuka/auto',{i,on:!(S.auto&&S.auto[i].on)});tick();});
 document.querySelectorAll('select[data-i]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/fix',{i:+x.dataset.i,state:x.value});tick();}});
+const lg=S.log||[];$('lh').textContent=`クリアしたクエスト ${lg.length}個 ・ オーブ ${lg.reduce((a,b)=>a+(b.orb||0),0)}個`;
+$('LG').innerHTML=lg.length?lg.slice().reverse().map(l=>`${l.t}　${l.i}画面目　${l.quest}　+${l.orb}オーブ`).join('<br>'):'まだありません';
 const sig=S.learn.map(l=>l.id+l.state).join();if(sig!==window._ls){window._ls=sig;
 $('L').innerHTML=S.learn.map(l=>`<div class="c" style="width:170px"><div class="st" style="font-size:16px">${l.state}</div><div class="small">${l.note||''} ・${l.n}回</div>
 <img src="/shuka/limg?id=${l.id}" alt="" style="min-height:0"><select data-l="${l.id}"><option value="">直す…</option>${opts}<option value="_delete">この見本を消す</option></select></div>`).join('');
