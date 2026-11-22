@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 72
+HELPER_VER = 73
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1577,6 +1577,17 @@ class ShukaAuto:
                 same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
                 if same >= 15:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
+                SL = min((L for L in self.sh.learn if L.get("state") == "shuka_list"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
+                if inf.get("after_lp") and SL and sig_dist(sig, SL["sig"]) < .06:
+                    if is_shuka_list(data, off, w, h):
+                        inf["after_lp"] = False
+                    else:     # the page of the quest we just cleared (long press jumps there): back to the list, no AI
+                        time.sleep(random.uniform(.8, 2.2))
+                        A.tap(w * random.uniform(.06, .11), h * random.uniform(.138, .152), random.random())
+                        inf["after_lp"] = False; inf["steps"] += 1
+                        inf["msg"] = "クリアしたクエストのページ：戻る"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+                        inf["hist"] = (inf["hist"] + ["クリアしたクエストのページから左上の戻る矢印で一覧へ戻った"])[-14:]
+                        time.sleep(random.uniform(1, 1.8)); continue
                 # the 書庫 list (known look): pick the quest in code, no AI
                 SL = min((L for L in self.sh.learn if L.get("state") == "shuka_list"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
                 if SL and sig_dist(sig, SL["sig"]) < .06 and is_shuka_list(data, off, w, h) and same < 3 and not inf.get("_pickfail"):
@@ -1589,7 +1600,7 @@ class ShukaAuto:
                     if self.deck(A, i, inf, want): continue
                 # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
                 ctx = "after" if inf["clears"] else "first"
-                L = min((L for L in self.sh.learn if L.get("act") and L["act"].get("ctx", ctx) == ctx), key=lambda L: sig_dist(sig, L["sig"]), default=None)
+                L = min((L for L in self.sh.learn if L.get("act") and (L.get("state") != "home" or L["act"].get("ctx", ctx) == ctx)), key=lambda L: sig_dist(sig, L["sig"]), default=None)
                 if L and sig_dist(sig, L["sig"]) < .05 and same < 2:
                     a = dict(L["act"]); a.setdefault("state", L.get("state")); a.setdefault("why", L.get("note", "")); how = "覚えた操作"; kk = 2
                 else:
@@ -1610,7 +1621,7 @@ class ShukaAuto:
                     if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "deck_select", "filter", "battle", "other", "loading"):
                         with self.sh.lock:
                             self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
-                            self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, ctx=ctx); self.sh.save()
+                            self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, **({"ctx": ctx} if a.get("state") == "home" else {})); self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
                 if st == "battle": inf["battle_t"] = time.time()
                 if st != "shuka_list":
@@ -1651,6 +1662,7 @@ class ShukaAuto:
                 # human-like pause before acting: usually short, sometimes a longer look (the AI already took a few seconds)
                 time.sleep(random.uniform(.6, 2.5) if how == "AI" else (random.uniform(4, 9) if random.random() < .12 else random.uniform(1, 3.5)))
                 self.act(A, a, kk, random.random())
+                if st == "home" and a["action"] == "longpress": inf["after_lp"] = True
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
                 if st == "result" and not inf.get("_res"):
                     inf["clears"] += 1
