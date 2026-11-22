@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 50
+HELPER_VER = 51
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -959,7 +959,8 @@ def self_update():
     """download the newest helper from the tool's site; replace this file if it is newer. True = updated (restart needed)"""
     import re, urllib.request
     try:
-        with urllib.request.urlopen(f"{UPDATE_URL}?t={int(time.time())}", timeout=8) as r:
+        req = urllib.request.Request(f"{UPDATE_URL}?t={int(time.time())}", headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) monst-helper"})
+        with urllib.request.urlopen(req, timeout=8) as r:   # the site refuses Python's default user agent
             code = r.read().decode("utf-8")
         m = re.search(r"^HELPER_VER = (\d+)", code, re.M)
         if not m or int(m.group(1)) <= HELPER_VER:
