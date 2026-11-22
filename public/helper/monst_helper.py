@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 57
+HELPER_VER = 58
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1110,13 +1110,23 @@ class ShukaAuto:
                 same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
                 if same >= 15:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
-                # every step is decided by the AI, with what happened before as context (it can correct itself)
-                hist = inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
-                a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
-                with self.sh.lock: self.sh.ai_calls += 1
-                if not a:
-                    inf["msg"] = "AI：" + err; time.sleep(8); continue
-                how = "AI"; kk = 2
+                # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
+                L = min((L for L in self.sh.learn if L.get("act")), key=lambda L: sig_dist(sig, L["sig"]), default=None)
+                if L and sig_dist(sig, L["sig"]) < .05 and same < 2:
+                    a = dict(L["act"]); a.setdefault("state", L.get("state")); a.setdefault("why", L.get("note", "")); how = "覚えた操作"; kk = 2
+                else:
+                    if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
+                        with self.sh.lock: L.pop("act", None); self.sh.save()
+                    hist = inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+                    a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
+                    with self.sh.lock: self.sh.ai_calls += 1
+                    if not a:
+                        inf["msg"] = "AI：" + err; time.sleep(8); continue
+                    how = "AI"; kk = 2
+                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "quest_detail", "deck_select", "filter", "quest_list", "battle", "other"):
+                        with self.sh.lock:      # always the same tap on this screen: remember it
+                            self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
+                            self.sh.learn[-1]["act"] = {x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}; self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
                 inf["msg"] = f"{st}：{a['action']}（{how}）{why}"
                 print(f"書庫自動 {A.serial}: {inf['msg']}")
