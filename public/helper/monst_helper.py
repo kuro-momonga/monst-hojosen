@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 69
+HELPER_VER = 70
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -860,7 +860,7 @@ def _count(j):
 
 SHUKA_GROUPS = os.path.join(HERE, "shuka_groups.json")
 SHUKA_POS = os.path.join(HERE, "shuka_pos.json")      # where 出撃 is and where to swipe the deck (fractions of the screen)
-GROUP_ORDER = ["極", "究極", "究極★5以下制限", "激究極"]      # the groups we clear, in this order (others are harder or multi-only)
+GROUP_ORDER = ["極", "究極★5以下制限", "究極", "激究極"]      # the groups we clear, in this order (others are harder or multi-only)
 
 
 def png_crop(data, off, w, h, x0, y0, x1, y1, step=1):
@@ -1557,7 +1557,7 @@ class ShukaAuto:
                         with self.sh.lock: self.sh.add("shuka_list", "書庫の一覧", sig, png_small(data, off, w, h, 6))
                     if self.pick_quest(A, i, inf): continue
                     inf["_pickfail"] = True
-                    inf["hist"] = (inf["hist"] + ["プログラムがスクロールバーでクエストを選べなかった。一覧から極→究極→★5制限→激究極の順で左上のクエストを選んで"])[-14:]
+                    inf["hist"] = (inf["hist"] + ["プログラムがスクロールバーでクエストを選べなかった。一覧から極→★5制限→究極→激究極の順で左上のクエストを選んで"])[-14:]
                     continue
                 if st == "deck_select" and how == "AI":      # learn the screen, where 出撃 is and where the deck swipes
                     if not (DS and sig_dist(sig, DS["sig"]) < .06):
