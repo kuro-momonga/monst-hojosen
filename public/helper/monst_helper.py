@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 70
+HELPER_VER = 71
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -924,6 +924,28 @@ def ask_claude_head(png):
         return None
 
 
+def ask_claude_deck(png, W, H):
+    """deck select: which deck is shown, where 出撃 is, where the deck name band is. Asked only for a deck look not seen before."""
+    import base64, urllib.request, re as _re
+    key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
+    if not key: return None
+    txt = (f"モンストのデッキ選択画面です（幅{W}、高さ{H}のピクセル座標）。表示中のデッキの名前を読んで、"
+           "「書庫周回」なら normal、「書庫★5制限」（書庫☆5制限なども同じ）なら star5、それ以外の名前なら other。"
+           '出撃ボタンの中心と、デッキ名が書いてある帯の中心の y も答えてください。JSONだけで: {"deck":"normal","name":"読んだデッキ名","go":[x,y],"name_y":y}')
+    body = {"model": SHUKA_MODEL, "max_tokens": 400, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": txt}]}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            j = json.loads(r.read()); _count(j)
+        t = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
+        return json.loads(_re.search(r"\{.*\}", t, _re.S).group(0))
+    except Exception:
+        return None
+
+
 def ask_claude_state(png):
     """unknown screen -> ask Claude (Haiku) which screen it is. Returns (state, note, raw text)"""
     import base64, urllib.request, urllib.error
@@ -1447,23 +1469,49 @@ class ShukaAuto:
         try: json.dump(self.pos, open(SHUKA_POS, "w", encoding="utf-8"))
         except Exception: pass
 
-    def deck(self, A, inf, want, w, h):
-        """deck select, known screen and known deck: switch only between 書庫周回 and 書庫★5制限, then 出撃 (no AI)"""
-        if inf.get("deck") != want:
+    def deck(self, A, i, inf, want):
+        """deck select: read which deck is shown (learned look, AI only for a new look), swipe between 書庫周回 and
+        書庫★5制限 if needed (★5 is to the right), then 出撃. Returns False to let the AI handle it."""
+        decks = self.pos.setdefault("decks", {}).setdefault(A.serial, {"normal": [], "star5": []})
+        name = "書庫★5制限" if want == "star5" else "書庫周回"
+        for _ in range(4):
+            data, off, w, h = A.raw_frame()
+            ds = _gray_grid(data, off, w, h, .1, .75, 12, 14)
+            cur, bd = None, .03
+            for k, sigs in decks.items():
+                for g in sigs:
+                    d = sig_dist(ds, g)
+                    if d < bd: cur, bd = k, d
+            if cur is None:
+                r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
+                with self.sh.lock: self.sh.ai_calls += 1
+                if not r: return False
+                try:
+                    self.pos["go"] = [float(r["go"][0]) * 2 / w, float(r["go"][1]) * 2 / h]
+                    self.pos["swipe"] = {"y": float(r["name_y"]) * 2 / h}
+                except Exception: pass
+                cur = r.get("deck")
+                print(f"書庫自動 {A.serial}: デッキを読みました → {r.get('name')}（{cur}）")
+                if cur in decks: decks[cur] = (decks[cur] + [[round(v, 1) for v in ds]])[-8:]
+                self.save_pos()
+                if cur not in ("normal", "star5"): return False
+            if cur == want:
+                if "go" not in self.pos: return False
+                gx, gy = self.pos["go"]
+                time.sleep(random.uniform(.6, 1.8))
+                A.tap(w * gx + random.uniform(-.02, .02) * w, h * gy + random.uniform(-.008, .008) * h, random.random())
+                inf["deck"] = want
+                inf["msg"] = f"deck_select：{name}で出撃"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+                inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
+                time.sleep(random.uniform(1, 2)); return True
             sw = self.pos.get("swipe")
             if not sw: return False
-            x0 = w * random.uniform(.45, .55); d = w * random.uniform(.3, .4) * (1 if want == "normal" else -1)   # ★5 is to the right
+            x0 = w * random.uniform(.45, .55); d = w * random.uniform(.3, .4) * (1 if want == "normal" else -1)
             yy = h * sw["y"] + random.uniform(-8, 8)
-            time.sleep(random.uniform(.6, 1.6))
+            time.sleep(random.uniform(.6, 1.4))
             A.run("shell", "input", "swipe", *map(str, (round(x0 - d / 2), round(yy), round(x0 + d / 2), round(yy + random.uniform(-6, 6)), round(random.uniform(350, 600)))), timeout=15)
-            inf["deck"] = want; time.sleep(random.uniform(1.2, 2))
-        gx, gy = self.pos["go"]
-        time.sleep(random.uniform(.6, 1.8))
-        A.tap(w * gx + random.uniform(-.02, .02) * w, h * gy + random.uniform(-.008, .008) * h, random.random())
-        name = "書庫★5制限" if want == "star5" else "書庫周回"
-        inf["msg"] = f"deck_select：{name}で出撃"; print(f"書庫自動 {A.serial}: {inf['msg']}")
-        inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
-        time.sleep(random.uniform(1, 2)); return True
+            print(f"書庫自動 {A.serial}: デッキを{name}へ切り替え"); time.sleep(random.uniform(1.2, 2))
+        return False
 
     def act(self, A, a, k, seed):
         rng = random.Random(seed); kind = a["action"]
@@ -1523,9 +1571,8 @@ class ShukaAuto:
                 Gp = (inf.get("pick") or {}).get("group")
                 want = "star5" if Gp and "★5" in Gp else "normal"
                 DS = min((L for L in self.sh.learn if L.get("state") == "deck_select"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if DS and sig_dist(sig, DS["sig"]) < .06 and same < 2 and "go" in self.pos and inf.get("deck") in ("normal", "star5") \
-                        and (inf["deck"] == want or self.pos.get("swipe")):
-                    if self.deck(A, inf, want, w, h): continue
+                if DS and sig_dist(sig, DS["sig"]) < .06 and same < 3:
+                    if self.deck(A, i, inf, want): continue
                 # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
                 ctx = "after" if inf["clears"] else "first"
                 L = min((L for L in self.sh.learn if L.get("act") and L["act"].get("ctx", ctx) == ctx), key=lambda L: sig_dist(sig, L["sig"]), default=None)
@@ -1559,13 +1606,10 @@ class ShukaAuto:
                     inf["_pickfail"] = True
                     inf["hist"] = (inf["hist"] + ["プログラムがスクロールバーでクエストを選べなかった。一覧から極→★5制限→究極→激究極の順で左上のクエストを選んで"])[-14:]
                     continue
-                if st == "deck_select" and how == "AI":      # learn the screen, where 出撃 is and where the deck swipes
+                if st == "deck_select" and how == "AI":      # remember the screen, then the deck is handled in code
                     if not (DS and sig_dist(sig, DS["sig"]) < .06):
                         with self.sh.lock: self.sh.add("deck_select", "デッキ選択", sig, png_small(data, off, w, h, 6))
-                    if a["action"] == "tap":
-                        self.pos["go"] = [float(a.get("x", 0)) * kk / w, float(a.get("y", 0)) * kk / h]; inf["deck"] = want; self.save_pos()
-                    elif a["action"] == "swipe":
-                        self.pos["swipe"] = {"y": (float(a.get("y", 0)) + float(a.get("y2", 0))) * kk / 2 / h}; self.save_pos()
+                    if self.deck(A, i, inf, want): continue
                 # lost twice in a row on the same quest: skip it next time (tap the next one in the group)
                 if st == "lose" and not inf.get("_lost") and Gp:
                     f = inf.setdefault("fails", {}); f[Gp] = f.get(Gp, 0) + 1
