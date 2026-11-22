@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 58
+HELPER_VER = 59
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -984,7 +984,7 @@ class Shuka:
 # ======================= 書庫周回（段階2：自動で回す。画面ごとの操作はAIが決め、決まった操作は覚える） =======================
 SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク」をプレイしています。目的は「追憶の書庫」で、まだクリア報酬（オーブ）を受け取っていないクエストを1つずつクリアしていくことです。
 ルール：
-- ホーム画面では、真ん中の大きな「クエスト」ボタンを約1秒長押しする（前回のクエストへ飛ぶ）。
+- ホーム画面では、真ん中の大きな「クエスト」ボタンを普通にタップする（長押ししない。長押しすると関係ない前回のクエストへ飛ぶ）。
 - クエスト一覧では「追憶の書庫」を押す。
 - 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
 - 書庫の一覧では、極 → 究極 → ★5制限 → 激究極 のグループの順に、一番上のクエストを選ぶ。見えなければ下へスクロールする。超絶など、それより難しいグループしか残っていなければ止める（stop）。
