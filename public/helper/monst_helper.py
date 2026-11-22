@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 65
+HELPER_VER = 66
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -858,6 +858,7 @@ def _count(j):
 
 
 SHUKA_GROUPS = os.path.join(HERE, "shuka_groups.json")
+SHUKA_POS = os.path.join(HERE, "shuka_pos.json")      # where 出撃 is and where to swipe the deck (fractions of the screen)
 GROUP_ORDER = ["極", "究極", "究極★5以下制限", "激究極"]      # the groups we clear, in this order (others are harder or multi-only)
 
 
@@ -876,20 +877,27 @@ def png_crop(data, off, w, h, x0, y0, x1, y1, step=1):
 HEAD_BOX = (0, .40, .55, .50)      # where the list's group heading (黎絶 / 極 ...) sits, left side under the search box
 
 
-def head_bits(data, off, w, h):
-    """white text of the heading area as a 28x8 grid of 'how much white' (the art behind it does not matter much)"""
-    x0, y0, x1, y1 = HEAD_BOX; out = []
+def head_bits(data, off, w, h, yc=None):
+    """white text of a heading band as a 28x8 grid of 'how much white' (the art behind it does not matter much).
+    yc: centre of the band as a fraction of the height (default: the sticky heading under the search box)"""
+    x0, y0, x1, y1 = HEAD_BOX
+    if yc is not None: y0, y1 = yc - (y1 - y0) / 2, yc + (y1 - y0) / 2
+    out = []
     for gy in range(8):
         ya = int(h * (y0 + (y1 - y0) * gy / 8)); yb = int(h * (y0 + (y1 - y0) * (gy + 1) / 8))
         for gx in range(28):
             xa = int(w * (x0 + (x1 - x0) * gx / 28)); xb = int(w * (x0 + (x1 - x0) * (gx + 1) / 28)); n = t = 0
-            for y in range(ya, max(ya + 1, yb), 2):
+            for y in range(ya, max(ya + 1, yb), 3):
                 o = off + y * w * 4
-                for x in range(xa, max(xa + 1, xb), 2):
+                for x in range(xa, max(xa + 1, xb), 3):
                     i = o + x * 4; t += 1
                     if data[i] > 205 and data[i + 1] > 205 and data[i + 2] > 205: n += 1
             out.append(n / max(1, t))
     return out
+
+
+def bits_dist(a, b):
+    return sum(abs(p - q) for p, q in zip(a, b)) / len(a)
 
 
 def norm_group(t):
@@ -1067,10 +1075,10 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - ホーム画面：この周回でまだ書庫のクエストを1つもクリアしていなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップし、クエスト一覧で「追憶の書庫」を押す。ボタン上部の「SHORT CUT」の矢印のあたりや長押しは、関係ない前回のクエスト（禁忌の獄など）へ飛ぶので使わない。間違って書庫以外に入ったら、左上の青い戻る矢印やホームボタンで戻る。書庫のクエストを1つ以上クリアした後は「クエスト」を約1秒長押しする（さっきの書庫クエストの詳細へ飛ぶので、左上の戻る矢印で書庫の一覧に戻る）。
 - クエスト一覧では「追憶の書庫」を押す。
 - 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
-- 書庫の一覧：どのグループを遊ぶかはプログラムがスクロールバーで一覧を全部見て決め、流れ（履歴）で伝える。伝えられたグループの見出しのすぐ下、一番左上のクエストを押す。まだ伝えられていなければ swipe と答える（プログラムが一覧を見に行く）。自分で stop しない。
+- 書庫の一覧：どのクエストを押すかはプログラムが決めるので、state は shuka_list、action は wait と答えればよい（絞り込みが「報酬未受取」になっていないときだけ、右上の「表示順変更」を押す）。
 - クエスト詳細では、一番上の難易度を押す。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上を押す。
-- デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間）を左右にスワイプして切り替える。合っていれば「出撃」。
+- デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間、デッキ名やキャラのあたり）を横にスワイプして切り替える（★5制限は書庫周回の右隣）。合っていれば「出撃」を tap。
 - 読み込み中・通信中・演出中は待つ（wait）。
 - リザルトやスペシャル報酬は画面を押して進める。OKボタンがあれば押す。
 - 確認ウィンドウはOKを押す（購入・オーブ消費・コンティニューは押さない）。
@@ -1147,6 +1155,8 @@ class ShukaAuto:
         except Exception: self.log = []
         try: self.groups = json.load(open(SHUKA_GROUPS, encoding="utf-8"))
         except Exception: self.groups = []
+        try: self.pos = json.load(open(SHUKA_POS, encoding="utf-8"))
+        except Exception: self.pos = {}
         import threading
         for i, A in enumerate(adbs):
             threading.Thread(target=self.loop, args=(i, A), daemon=True).start()
@@ -1183,8 +1193,8 @@ class ShukaAuto:
         data, off, w, h = A.raw_frame()
         bits = head_bits(data, off, w, h)
         if sum(bits) < .2: return None
-        best = min(self.groups, key=lambda G: sum(abs(p - q) for p, q in zip(bits, G["bits"])) / len(bits), default=None)
-        if best and sum(abs(p - q) for p, q in zip(bits, best["bits"])) / len(bits) < .035:
+        best = min(self.groups, key=lambda G: bits_dist(bits, G["bits"]), default=None)
+        if best and bits_dist(bits, best["bits"]) < .035:
             return best["name"]
         name = ask_claude_head(png_crop(data, off, w, h, *HEAD_BOX))
         with self.sh.lock: self.sh.ai_calls += 1
@@ -1208,6 +1218,90 @@ class ShukaAuto:
             g = self.head(A)
             if g and (not found or found[-1][1] != g): found.append((ty, g))
         return found
+
+    def find_heading(self, A, name):
+        """y (pixels) of the heading row `name` inside the list, or None"""
+        refs = [G["bits"] for G in self.groups if G["name"] == name]
+        if not refs: return None
+        data, off, w, h = A.raw_frame()
+        best = None
+        for yy in range(int(h * .40), int(h * .82), 8):
+            b = head_bits(data, off, w, h, yy / h)
+            if sum(b) < .2: continue
+            d = min(bits_dist(b, r) for r in refs)
+            if best is None or d < best[0]: best = (d, yy)
+        if best and best[0] < .06:
+            return best[1]
+        return None
+
+    def pick_quest(self, A, i, inf):
+        """on the 書庫 list: go to the group to play and tap its first quest (no AI). Returns True when it tapped."""
+        data, off, w, h = A.raw_frame()
+        pick = inf.get("pick") or {}
+        G, ty = pick.get("group"), pick.get("ty")
+        y = None
+        if G and ty is not None:                 # same place as last time: after a clear the next quest slides into the same spot
+            self.drag_to(A, ty); y = self.find_heading(A, G)
+        if y is None:
+            inf["msg"] = "書庫の一覧を見ています（スクロールバー）"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+            found = self.survey(A)
+            groups = [g for _, g in found]
+            print(f"書庫自動 {A.serial}: 一覧のグループ → {' / '.join(dict.fromkeys(groups)) or '読めませんでした'}")
+            if not found:
+                return False
+            G = next((g for g in GROUP_ORDER if g in groups), None)
+            if not G:
+                self.run[i] = False; inf["msg"] = "止めました：残りは " + "・".join(dict.fromkeys(groups)) + "（超絶以上かマルチ専用）"
+                print(f"書庫自動 {A.serial}: {inf['msg']}"); return True
+            idx = groups.index(G); ty = found[max(0, idx - 1)][0]
+            self.drag_to(A, ty); y = self.find_heading(A, G)
+            step = (found[-1][0] - found[0][0]) / 28 if len(found) > 1 else 20
+            for d in (.5, 1, -.5, 1.5):
+                if y is not None: break
+                self.drag_to(A, ty + d * step); y = self.find_heading(A, G)
+                if y is not None: ty += d * step
+        if y is None:
+            return False
+        n = inf.setdefault("skip", {}).get(G, 0); col, row = n % 5, n // 5
+        for _ in range(8):                      # the heading must be in the list (not the sticky one on top) and the quest on screen
+            if y is None: break
+            iy = y + w * (.146 + .18 * row)
+            if y < h * .48: ty -= 6
+            elif iy > h * .84: ty += 6
+            else: break
+            self.drag_to(A, ty); y = self.find_heading(A, G)
+        if y is None:
+            inf["pick"] = None; return False
+        iy = y + w * (.146 + .18 * row); ix = w * (.13 + .181 * col)
+        time.sleep(random.uniform(.5, 1.8))
+        A.tap(ix + random.uniform(-.025, .025) * w, iy + random.uniform(-.025, .025) * w, random.random())
+        inf["pick"] = {"group": G, "ty": ty}; inf["steps"] += 1
+        inf["msg"] = f"shuka_list：「{G}」の{n + 1}番目を押した"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+        inf["hist"] = (inf["hist"] + [f"書庫の一覧で「{G}」グループのクエストを押した" + ("（★5制限のクエスト）" if "★5" in G else "")])[-14:]
+        time.sleep(random.uniform(1, 2))
+        return True
+
+    def save_pos(self):
+        try: json.dump(self.pos, open(SHUKA_POS, "w", encoding="utf-8"))
+        except Exception: pass
+
+    def deck(self, A, inf, want, w, h):
+        """deck select, known screen and known deck: switch only between 書庫周回 and 書庫★5制限, then 出撃 (no AI)"""
+        if inf.get("deck") != want:
+            sw = self.pos.get("swipe")
+            if not sw: return False
+            x0 = w * random.uniform(.45, .55); d = w * random.uniform(.3, .4) * (1 if want == "normal" else -1)   # ★5 is to the right
+            yy = h * sw["y"] + random.uniform(-8, 8)
+            time.sleep(random.uniform(.6, 1.6))
+            A.run("shell", "input", "swipe", *map(str, (round(x0 - d / 2), round(yy), round(x0 + d / 2), round(yy + random.uniform(-6, 6)), round(random.uniform(350, 600)))), timeout=15)
+            inf["deck"] = want; time.sleep(random.uniform(1.2, 2))
+        gx, gy = self.pos["go"]
+        time.sleep(random.uniform(.6, 1.8))
+        A.tap(w * gx + random.uniform(-.02, .02) * w, h * gy + random.uniform(-.008, .008) * h, random.random())
+        name = "書庫★5制限" if want == "star5" else "書庫周回"
+        inf["msg"] = f"deck_select：{name}で出撃"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+        inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
+        time.sleep(random.uniform(1, 2)); return True
 
     def act(self, A, a, k, seed):
         rng = random.Random(seed); kind = a["action"]
@@ -1253,6 +1347,17 @@ class ShukaAuto:
                 same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
                 if same >= 15:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
+                # the 書庫 list (known look): pick the quest in code, no AI
+                SL = min((L for L in self.sh.learn if L.get("state") == "shuka_list"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
+                if SL and sig_dist(sig, SL["sig"]) < .06 and same < 3 and not inf.get("_pickfail"):
+                    if self.pick_quest(A, i, inf): continue
+                    inf["_pickfail"] = True
+                Gp = (inf.get("pick") or {}).get("group")
+                want = "star5" if Gp and "★5" in Gp else "normal"
+                DS = min((L for L in self.sh.learn if L.get("state") == "deck_select"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
+                if DS and sig_dist(sig, DS["sig"]) < .06 and same < 2 and "go" in self.pos and inf.get("deck") in ("normal", "star5") \
+                        and (inf["deck"] == want or self.pos.get("swipe")):
+                    if self.deck(A, inf, want, w, h): continue
                 # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
                 ctx = "after" if inf["clears"] else "first"
                 L = min((L for L in self.sh.learn if L.get("act") and L["act"].get("ctx", ctx) == ctx), key=lambda L: sig_dist(sig, L["sig"]), default=None)
@@ -1261,7 +1366,7 @@ class ShukaAuto:
                 else:
                     if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
                         with self.sh.lock: L.pop("act", None); self.sh.save()
-                    hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else []) \
+                    hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
 
                     a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
                     with self.sh.lock: self.sh.ai_calls += 1
@@ -1277,26 +1382,30 @@ class ShukaAuto:
                             self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, ctx=ctx); self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
                 if st != "shuka_list":
-                    if st not in ("other", "loading", "dialog"): inf["pick"] = None
-                elif not inf.get("pick") and (a["action"] in ("swipe", "stop") or (a["action"] == "tap" and float(a.get("y", 0) or 0) * kk > h * .42)):
-                    # which quest to play: look through the whole list with the scrollbar, reading the group heading on the left
-                    inf["msg"] = "書庫の一覧を見ています（スクロールバー）"; print(f"書庫自動 {A.serial}: {inf['msg']}")
-                    found = self.survey(A)
-                    groups = [g for _, g in found]
-                    print(f"書庫自動 {A.serial}: 一覧のグループ → {' / '.join(dict.fromkeys(groups)) or '読めませんでした'}")
-                    target = next((G for G in GROUP_ORDER if G in groups), None)
-                    if not found:
-                        inf["pick"] = {"group": "?"}; inf["hist"] = (inf["hist"] + ["スクロールバーで一覧を見られなかった"])[-14:]; continue
-                    if not target:
-                        self.run[i] = False; inf["msg"] = "止めました：残りは " + "・".join(dict.fromkeys(groups)) + "（超絶以上かマルチ専用）"
-                        print(f"書庫自動 {A.serial}: {inf['msg']}"); continue
-                    idx = groups.index(target)
-                    self.drag_to(A, found[max(0, idx - 1)][0])       # one step before: the heading row of the group is in view
-                    inf["pick"] = {"group": target}; inf["steps"] += 1
-                    inf["hist"] = (inf["hist"] + [f"一覧を全部見た。次は「{target}」グループ。その見出しのすぐ下の一番左上のクエストを押す（見出しが見えなければ少しだけ下へswipe）"])[-14:]
+                    inf["_pickfail"] = False
+                elif how == "AI" and not inf.get("_pickfail") and not (a["action"] == "tap" and float(a.get("y", 0) or 0) * kk < h * .3):
+                    # the AI says this is the list: remember the look, then pick in code (the AI only handles the filter button up top)
+                    if not (SL and sig_dist(sig, SL["sig"]) < .06):
+                        with self.sh.lock: self.sh.add("shuka_list", "書庫の一覧", sig, png_small(data, off, w, h, 6))
+                    if self.pick_quest(A, i, inf): continue
+                    inf["_pickfail"] = True
+                    inf["hist"] = (inf["hist"] + ["プログラムがスクロールバーでクエストを選べなかった。一覧から極→究極→★5制限→激究極の順で左上のクエストを選んで"])[-14:]
                     continue
-                elif a["action"] == "stop" and (inf.get("pick") or {}).get("group") not in (None, "?"):
-                    a = {"action": "swipe", "state": st, "x": w / 4, "y": h * .75 / 2, "x2": w / 4, "y2": h * .55 / 2}; why = "グループを探して少しスクロール"
+                if st == "deck_select" and how == "AI":      # learn the screen, where 出撃 is and where the deck swipes
+                    if not (DS and sig_dist(sig, DS["sig"]) < .06):
+                        with self.sh.lock: self.sh.add("deck_select", "デッキ選択", sig, png_small(data, off, w, h, 6))
+                    if a["action"] == "tap":
+                        self.pos["go"] = [float(a.get("x", 0)) * kk / w, float(a.get("y", 0)) * kk / h]; inf["deck"] = want; self.save_pos()
+                    elif a["action"] == "swipe":
+                        self.pos["swipe"] = {"y": (float(a.get("y", 0)) + float(a.get("y2", 0))) * kk / 2 / h}; self.save_pos()
+                # lost twice in a row on the same quest: skip it next time (tap the next one in the group)
+                if st == "lose" and not inf.get("_lost") and Gp:
+                    f = inf.setdefault("fails", {}); f[Gp] = f.get(Gp, 0) + 1
+                    if f[Gp] >= 2:
+                        f[Gp] = 0; inf.setdefault("skip", {})[Gp] = inf["skip"].get(Gp, 0) + 1
+                        print(f"書庫自動 {A.serial}: 「{Gp}」のこのクエストは2回負けたので次から飛ばします")
+                inf["_lost"] = st == "lose"
+                if st == "result" and Gp: inf.setdefault("fails", {})[Gp] = 0
                 if st == "shuka_list" and a["action"] == "swipe":    # gentle, slow finger scroll (no fling)
                     x0 = w * random.uniform(.35, .6); dy = max(-.35, min(.35, (float(a.get("y2", 0) or 0) - float(a.get("y", 0) or 0)) * kk / h)) or -.2
                     y0 = h * (.72 if dy < 0 else .5)
