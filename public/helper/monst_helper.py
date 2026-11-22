@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 53
+HELPER_VER = 54
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -652,6 +652,11 @@ def make_handler(adbs):
                     return self.reply(200, SHUKA_PAGE.encode(), "text/html; charset=utf-8")
                 if self.path.startswith("/shuka/state"):
                     return self.reply(200, SH.status())
+                if self.path.startswith("/shuka/limg"):
+                    from urllib.parse import urlparse, parse_qs
+                    lid = "".join(ch for ch in (parse_qs(urlparse(self.path).query).get("id") or [""])[0] if ch.isdigit())
+                    fp = os.path.join(SHUKA_IMG, lid + ".png")
+                    return self.reply(200, open(fp, "rb").read() if os.path.exists(fp) else b"", "image/png")
                 if self.path.startswith("/shuka/thumb"):
                     from urllib.parse import urlparse, parse_qs
                     i = int((parse_qs(urlparse(self.path).query).get("i") or ["0"])[0])
@@ -715,6 +720,8 @@ def make_handler(adbs):
                 if self.path.startswith("/shuka/run"):
                     SH.on = bool(q.get("on")); print("書庫: 画面の判定を" + ("始めました" if SH.on else "止めました"))
                     return self.reply(200, SH.status())
+                if self.path.startswith("/shuka/relabel"):
+                    return self.reply(200, {"ok": SH.relabel(str(q["id"]), q["state"])})
                 if self.path.startswith("/shuka/fix"):
                     return self.reply(200, {"ok": SH.fix(int(q["i"]), q["state"])})
                 if self.path.startswith("/shuka/key"):
@@ -778,7 +785,9 @@ SHUKA_STATES = {
     "dialog": "その他の確認ウィンドウ・お知らせ",
     "other": "上のどれでもない画面",
 }
-SHUKA_FILE = os.path.join(HERE, "shuka_learn.json") if "HERE" in globals() else "shuka_learn.json"
+SHUKA_FILE = os.path.join(HERE, "shuka_learn.json")
+SHUKA_IMG = os.path.join(HERE, "shuka_img")
+SHUKA_MODEL = "claude-haiku-5-5"
 KEY_FILE = None   # set in main()
 
 
@@ -821,26 +830,40 @@ def png_small(data, off, w, h, step=4):
 
 
 def ask_claude_state(png):
-    """unknown screen -> ask Claude (Haiku) which screen it is. Returns (state, note)"""
-    import base64, urllib.request
+    """unknown screen -> ask Claude (Haiku) which screen it is. Returns (state, note, raw text)"""
+    import base64, urllib.request, urllib.error
     key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
     if not key:
-        return None, "APIキーが未設定"
-    states = "\n".join(f"- {k}: {v}" for k, v in SHUKA_STATES.items())
-    body = {"model": "claude-haiku-5-5", "max_tokens": 150, "messages": [{"role": "user", "content": [
+        return None, "APIキーが未設定", ""
+    states = "\n".join(f"{k} : {v}" for k, v in SHUKA_STATES.items())
+    body = {"model": SHUKA_MODEL, "max_tokens": 200, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
-        {"type": "text", "text": "これはスマホゲーム「モンスターストライク」の画面です。次のどれに当たるか、JSONだけで答えてください。"
-                                 '形式: {"state": "<名前>", "note": "<20文字以内で画面の説明>"}\n' + states}]}]}
+        {"type": "text", "text": "これはスマホゲーム「モンスターストライク」の画面です。下の一覧から一番近い画面を1つ選んでください。\n"
+                                 "1行目に左側の英語の名前だけ、2行目に20文字以内で画面の説明を書いてください。ほかには何も書かないでください。\n\n" + states}]}]}
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        j = json.loads(r.read())
-    txt = "".join(c.get("text", "") for c in j.get("content", []))
-    import re
-    m = re.search(r"\{.*\}", txt, re.S)
-    ans = json.loads(m.group(0)) if m else {}
-    st = ans.get("state") if ans.get("state") in SHUKA_STATES else "other"
-    return st, str(ans.get("note", ""))[:40]
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            j = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        msg = e.read().decode(errors="ignore")[:300]
+        print("書庫: AIへの問い合わせに失敗:", e.code, msg)
+        return None, f"AIエラー {e.code}: {msg[:60]}", msg
+    txt = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text").strip()
+    lines = [l.strip() for l in txt.splitlines() if l.strip()]
+    st = None
+    for l in lines[:2]:
+        for k in SHUKA_STATES:
+            if l.lower().strip("`*:：- ").startswith(k):
+                st = k; break
+        if st: break
+    if not st:
+        hits = [k for k in SHUKA_STATES if k in txt]
+        st = hits[0] if hits else "other"
+    note = next((l for l in lines if not any(l.lower().startswith(k) for k in SHUKA_STATES)), "")[:40]
+    if st == "other":
+        print("書庫: AIの答え（other）:", txt[:200].replace("\n", " / "))
+    return st, note, txt
 
 
 class Shuka:
@@ -849,7 +872,10 @@ class Shuka:
         import threading
         self.adbs, self.on, self.lock = adbs, False, threading.Lock()
         try: self.learn = json.load(open(SHUKA_FILE, encoding="utf-8"))
-        except Exception: self.learn = []          # [{state, note, sig, n}]
+        except Exception: self.learn = []          # [{id, state, note, sig, n}]
+        self.learn = [L for L in self.learn if not (L.get("state") == "other" and not L.get("note"))]   # v50-53: unreadable answers
+        for L in self.learn: L.setdefault("id", f"{int(time.time() * 1000)}{random.randint(100, 999)}")
+        os.makedirs(SHUKA_IMG, exist_ok=True)
         self.inst = [{"serial": A.serial, "state": "-", "note": "", "how": "", "png": b"", "sig": None, "t": 0} for A in adbs]
         self.ai_calls = 0
         for i, A in enumerate(adbs):
@@ -896,19 +922,35 @@ class Shuka:
                     if (prev_sig is None or sig_dist(sig, prev_sig) > .05) and waits < 2:
                         prev_sig = sig; waits += 1; st.update(state="?", note="判定中（画面が落ち着くのを待っています）", how=""); continue
                     waits = 0
-                    state, note = ask_claude_state(png_small(data, off, w, h, 2))
-                    if state is not None:
-                        with self.lock: self.ai_calls += 1
+                    state, note, raw = ask_claude_state(png_small(data, off, w, h, 2))
                     if state is None:
-                        st.update(state="?", note=note, how=""); continue
+                        st.update(state="?", note=note, how=""); time.sleep(10); continue
                     with self.lock:
-                        self.learn.append({"state": state, "note": note, "sig": [round(v, 1) for v in sig], "n": 1}); self.save()
+                        self.ai_calls += 1
+                        self.add(state, note, sig, png_small(data, off, w, h, 6))
                     how = "AI（覚えました）"
                     print(f"書庫 {A.serial}: 新しい画面 → {state}（{note}）")
                 prev_sig = sig
                 st.update(state=state, note=note, how=how)
             except Exception as e:
                 st.update(state="×", note=str(e)[:80], how="")
+
+    def add(self, state, note, sig, thumb):
+        lid = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
+        try:
+            with open(os.path.join(SHUKA_IMG, lid + ".png"), "wb") as f: f.write(thumb)
+        except Exception: pass
+        self.learn.append({"id": lid, "state": state, "note": note, "sig": [round(v, 1) for v in sig], "n": 1}); self.save()
+
+    def relabel(self, lid, state):
+        with self.lock:
+            if state == "_delete":
+                self.learn = [L for L in self.learn if L["id"] != lid]
+            else:
+                for L in self.learn:
+                    if L["id"] == lid and state in SHUKA_STATES: L["state"] = state; L["note"] = "手で直した"
+            self.save()
+        return True
 
     def fix(self, i, state):
         """the user corrects the last screen of instance i"""
@@ -918,14 +960,14 @@ class Shuka:
             for L in self.learn:
                 if sig_dist(sig, L["sig"]) < .06: L["state"] = state; L["note"] = "手で直した"
             if not any(sig_dist(sig, L["sig"]) < .06 for L in self.learn):
-                self.learn.append({"state": state, "note": "手で直した", "sig": [round(v, 1) for v in sig], "n": 1})
+                self.add(state, "手で直した", sig, self.inst[i].get("png") or b"")
             self.save()
         self.inst[i].update(state=state, note="手で直した", how="見本")
         return True
 
     def status(self):
         return {"on": self.on, "ai_calls": self.ai_calls, "learned": len(self.learn), "key": bool(KEY_FILE and os.path.exists(KEY_FILE)),
-                "states": SHUKA_STATES, "inst": [{k: v for k, v in s.items() if k in ("serial", "state", "note", "how", "t")} for s in self.inst]}
+                "states": SHUKA_STATES, "learn": [{k: L.get(k) for k in ("id", "state", "note", "n")} for L in self.learn], "inst": [{k: v for k, v in s.items() if k in ("serial", "state", "note", "how", "t")} for s in self.inst]}
 
 
 SHUKA_PAGE = """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -938,7 +980,8 @@ main{display:flex;gap:16px;flex-wrap:wrap;padding:16px}.c{background:#171a21;bor
 .c img{width:100%;border-radius:8px;background:#000;min-height:200px}.st{font-size:22px;font-weight:800;color:#ffcf3f}
 </style></head><body><header><h1>書庫周回：画面の判定（まだ何も押しません）</h1>
 <button id="run">判定を始める</button><span id="info" class="small"></span><span style="flex:1"></span>
-<span id="keybox" class="small"></span></header><main id="m"></main><script>
+<span id="keybox" class="small"></span></header><main id="m"></main>
+<h2 style="font-size:15px;margin:8px 16px">覚えた画面（違っていたら直す・消す）</h2><main id="L"></main><script>
 let S=null;const $=id=>document.getElementById(id);
 async function post(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
 async function tick(){try{S=await (await fetch('/shuka/state')).json();render();}catch(e){$('info').textContent='ヘルパーにつながりません';}}
@@ -951,7 +994,11 @@ const opts=Object.entries(S.states).map(([k,v])=>`<option value="${k}">${k}：${
 $('m').innerHTML=S.inst.map((s,i)=>`<div class="c"><div class="small">${i+1}画面目 ${s.serial}</div><div class="st">${s.state}</div>
 <div class="small">${s.note||''} ${s.how?'・'+s.how:''}</div><img src="/shuka/thumb?i=${i}&t=${s.t}" alt="">
 <div class="small">違っていたら直す：</div><select data-i="${i}"><option value="">選ぶ…</option>${opts}</select></div>`).join('');
-document.querySelectorAll('select[data-i]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/fix',{i:+x.dataset.i,state:x.value});tick();}});}
+document.querySelectorAll('select[data-i]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/fix',{i:+x.dataset.i,state:x.value});tick();}});
+const sig=S.learn.map(l=>l.id+l.state).join();if(sig!==window._ls){window._ls=sig;
+$('L').innerHTML=S.learn.map(l=>`<div class="c" style="width:170px"><div class="st" style="font-size:16px">${l.state}</div><div class="small">${l.note||''} ・${l.n}回</div>
+<img src="/shuka/limg?id=${l.id}" alt="" style="min-height:0"><select data-l="${l.id}"><option value="">直す…</option>${opts}<option value="_delete">この見本を消す</option></select></div>`).join('');
+document.querySelectorAll('select[data-l]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/relabel',{id:x.dataset.l,state:x.value});window._ls='';tick();}});}}
 $('run').onclick=async()=>{await post('/shuka/run',{on:!S.on});tick();};
 tick();setInterval(()=>{if(!document.querySelector('select:focus'))tick();},3000);
 </script></body></html>"""
