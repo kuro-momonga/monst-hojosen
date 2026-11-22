@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 54
+HELPER_VER = 55
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -836,7 +836,7 @@ def ask_claude_state(png):
     if not key:
         return None, "APIキーが未設定", ""
     states = "\n".join(f"{k} : {v}" for k, v in SHUKA_STATES.items())
-    body = {"model": SHUKA_MODEL, "max_tokens": 200, "messages": [{"role": "user", "content": [
+    body = {"model": SHUKA_MODEL, "max_tokens": 1500, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
         {"type": "text", "text": "これはスマホゲーム「モンスターストライク」の画面です。下の一覧から一番近い画面を1つ選んでください。\n"
                                  "1行目に左側の英語の名前だけ、2行目に20文字以内で画面の説明を書いてください。ほかには何も書かないでください。\n\n" + states}]}]}
@@ -850,6 +850,9 @@ def ask_claude_state(png):
         print("書庫: AIへの問い合わせに失敗:", e.code, msg)
         return None, f"AIエラー {e.code}: {msg[:60]}", msg
     txt = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text").strip()
+    if not txt:   # nothing written (ran out of tokens, refused...): do not learn anything from it
+        print("書庫: AIの答えが空でした:", j.get("stop_reason"), [c.get("type") for c in j.get("content", [])])
+        return None, f"AIの答えが空（{j.get('stop_reason')}）", 
     lines = [l.strip() for l in txt.splitlines() if l.strip()]
     st = None
     for l in lines[:2]:
