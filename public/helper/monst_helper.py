@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 75
+HELPER_VER = 76
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -653,7 +653,7 @@ def make_handler(adbs):
                 if self.path.rstrip("/") == "/shuka":
                     return self.reply(200, SHUKA_PAGE.encode(), "text/html; charset=utf-8")
                 if self.path.startswith("/shuka/state"):
-                    return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k != "hist"}} for i in range(len(adbs))]})
+                    return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k in ("msg", "steps", "clears", "quest")}} for i in range(len(adbs))]})
                 if self.path.startswith("/shuka/limg"):
                     from urllib.parse import urlparse, parse_qs
                     lid = "".join(ch for ch in (parse_qs(urlparse(self.path).query).get("id") or [""])[0] if ch.isdigit())
@@ -838,6 +838,90 @@ def full_sig(data, off, w, h):
     return _gray_grid(data, off, w, h, .2, .9, 8, 14)
 
 
+def _frac(data, off, w, h, box, pred, step=4):
+    x0, y0, x1, y1 = box; n = t = 0
+    for y in range(int(h * y0), int(h * y1), step):
+        o = off + y * w * 4
+        for x in range(int(w * x0), int(w * x1), step):
+            i = o + x * 4; t += 1
+            if pred(data[i], data[i + 1], data[i + 2]): n += 1
+    return n / max(1, t)
+
+
+_BLUE = lambda r, g, b: b > 180 and r < 120 and g > 90
+_ORANGE = lambda r, g, b: r > 200 and 100 < g < 210 and b < 90
+_TEAL = lambda r, g, b: g > 70 and b > 80 and r < g * .6 and abs(g - b) < 70
+_YELLOW = lambda r, g, b: r > 200 and g > 160 and b < 90
+
+
+def is_home(data, off, w, h):
+    """home: the blue ミッション and orange マルチ参加 buttons beside the big クエスト button"""
+    return _frac(data, off, w, h, (.04, .83, .3, .87), _BLUE) > .4 and _frac(data, off, w, h, (.68, .83, .94, .87), _ORANGE) > .3
+
+
+def is_play_type(data, off, w, h):
+    """solo / multi choice: a big blue ソロ and a big orange マルチ募集"""
+    return _frac(data, off, w, h, (.1, .4, .42, .6), _BLUE) > .35 and _frac(data, off, w, h, (.6, .4, .9, .6), _ORANGE) > .3
+
+
+def is_deck_select(data, off, w, h):
+    """deck select: the teal 出撃 button low in the middle (not the round クエスト button of home) and a deck name"""
+    return (_frac(data, off, w, h, (.40, .80, .58, .85), _TEAL) > .4 and _frac(data, off, w, h, (.40, .86, .58, .89), _TEAL) < .2
+            and not is_home(data, off, w, h) and sum(deck_bits(data, off, w, h)) > .3)
+
+
+def is_loading(data, off, w, h):
+    """black, or the grey patterned loading screen (dark and colourless)"""
+    n = t = sat = 0
+    for y in range(int(h * .08), h, max(1, h // 48)):
+        o = off + y * w * 4
+        for x in range(0, w, max(1, w // 27)):
+            i = o + x * 4; r, g, b = data[i], data[i + 1], data[i + 2]
+            t += 1; n += (r * 30 + g * 59 + b * 11) / 100; mx = max(r, g, b); sat += (mx - min(r, g, b)) * 255 / mx if mx else 0
+    mean, sat = n / t, sat / t
+    return mean < 8 or (mean < 45 and sat < 35)
+
+
+def quest_bands(data, off, w, h):
+    """the difficulty bands of a quest page: centre y (pixels) of each teal 詳細 button on the right, top first"""
+    fr = []
+    for y in range(int(h * .25), int(h * .86), 2):
+        o = off + y * w * 4; n = t = 0
+        for x in range(int(w * .80), int(w * .91), 3):
+            i = o + x * 4; t += 1
+            if _TEAL(data[i], data[i + 1], data[i + 2]): n += 1
+        fr.append((y, n / t))
+    runs = []
+    for y, f in fr:
+        if f > .5:
+            if runs and y - runs[-1][1] <= h * .025: runs[-1][1] = y
+            else: runs.append([y, y])
+    return [(a + b) / 2 for a, b in runs if h * .045 <= b - a <= h * .085]
+
+
+def has_clear_tag(data, off, w, h):
+    """the yellow CLEAR! tag on the quest banner (that quest's reward is already taken)"""
+    return _frac(data, off, w, h, (.04, .285, .26, .325), _YELLOW, 2) > .05
+
+
+DECK_BOX = (.28, .43, .56, .47)      # deck name above the characters on the deck select screen
+
+
+def deck_bits(data, off, w, h):
+    x0, y0, x1, y1 = DECK_BOX; out = []
+    for gy in range(4):
+        ya = int(h * (y0 + (y1 - y0) * gy / 4)); yb = int(h * (y0 + (y1 - y0) * (gy + 1) / 4))
+        for gx in range(24):
+            xa = int(w * (x0 + (x1 - x0) * gx / 24)); xb = int(w * (x0 + (x1 - x0) * (gx + 1) / 24)); n = t = 0
+            for y in range(ya, max(ya + 1, yb), 2):
+                o = off + y * w * 4
+                for x in range(xa, max(xa + 1, xb), 2):
+                    i = o + x * 4; t += 1
+                    if min(data[i], data[i + 1], data[i + 2]) > 170: n += 1
+            out.append(n / max(1, t))
+    return out
+
+
 def list_sig(data, off, w, h):
     """the middle of the screen (the scrolling list), to see whether a scroll moved anything"""
     return _gray_grid(data, off, w, h, .3, .9, 12, 16)
@@ -877,7 +961,6 @@ def _count(j):
 
 SHUKA_GROUPS = os.path.join(HERE, "shuka_groups.json")
 SHUKA_POS = os.path.join(HERE, "shuka_pos.json")      # where 出撃 is and where to swipe the deck (fractions of the screen)
-GROUP_ORDER = ["極", "究極★5以下制限", "究極", "激究極"]      # the groups we clear, in this order (others are harder or multi-only)
 
 
 def png_crop(data, off, w, h, x0, y0, x1, y1, step=1):
@@ -919,8 +1002,23 @@ def bits_dist(a, b):
 
 
 def norm_group(t):
-    t = re.sub(r"[\s　・\d]", "", t or "").replace("☆", "★").replace("星", "★")
-    return t
+    t = (t or "").translate(str.maketrans("０１２３４５６７８９☆", "0123456789★"))
+    t = re.sub(r"[\s　・]", "", t).replace("星", "★")
+    return re.sub(r"\d+$", "", t) if not t.endswith("制限") else t     # a count read by mistake at the end
+
+
+def canon(name):
+    """group name -> what we do with it: kiwami / star5 / kyuu / geki, or None (harder groups, multi-only)"""
+    t = norm_group(name)
+    if not t or "マルチ" in t: return None
+    if "★" in t or "制限" in t: return "star5" if "究極" in t or t.startswith("★") else None
+    if "激究極" in t: return "geki"
+    if t == "究極": return "kyuu"
+    if t == "極": return "kiwami"
+    return None
+
+
+GROUP_KEYS = ["kiwami", "star5", "kyuu", "geki"]          # the order to clear: 極 > 究極★5以下制限 > 究極 > 激究極
 
 
 def ask_claude_head(png):
@@ -961,6 +1059,28 @@ def ask_claude_deck(png, W, H):
         return json.loads(_re.search(r"\{.*\}", t, _re.S).group(0))
     except Exception:
         return None
+
+
+def ask_claude_deckname(png):
+    """the small crop of the deck name: normal (書庫周回) / star5 (書庫★5制限) / other"""
+    import base64, urllib.request
+    key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
+    if not key: return None, ""
+    body = {"model": SHUKA_MODEL, "max_tokens": 100, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": "モンストのデッキ名の部分です。書いてある文字だけを1行で答えてください。"}]}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            j = json.loads(r.read()); _count(j)
+        t = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text").strip().splitlines()[0]
+    except Exception:
+        return None, ""
+    n = norm_group(t)
+    if "書庫" in n and ("★" in n or "制限" in n): return "star5", t
+    if "書庫" in n and "周回" in n: return "normal", t
+    return "other", t
 
 
 def ask_claude_state(png):
@@ -1110,23 +1230,23 @@ class Shuka:
 
 
 # ======================= 書庫周回（段階2：自動で回す。画面ごとの操作はAIが決め、決まった操作は覚える） =======================
-SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク」をプレイしています。目的は「追憶の書庫」で、まだクリア報酬（オーブ）を受け取っていないクエストを1つずつクリアしていくことです。
+SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク」の自動周回を見守っています。目的は「追憶の書庫」で、まだクリア報酬（オーブ）を受け取っていないクエストを1つずつソロでクリアしていくことです。
+いつもの流れ（ホーム → 書庫の一覧 → クエストのページ → ソロ → 助っ人 → デッキ → バトル）は、ほとんどプログラムが自分で進めます。あなたが呼ばれるのは、プログラムが知らない画面が出たときです。
 ルール：
-- ホーム画面：この周回でまだ書庫のクエストを1つもクリアしていなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップし、クエスト一覧で「追憶の書庫」を押す。ボタン上部の「SHORT CUT」の矢印のあたりや長押しは、関係ない前回のクエスト（禁忌の獄など）へ飛ぶので使わない。間違って書庫以外に入ったら、左上の青い戻る矢印やホームボタンで戻る。書庫のクエストを1つ以上クリアした後は「クエスト」を約1秒長押しする（さっきの書庫クエストの詳細へ飛ぶので、左上の戻る矢印で書庫の一覧に戻る）。
-- クエスト一覧では「追憶の書庫」を押す。
-- 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
-- 書庫の一覧：どのクエストを押すかはプログラムが決めるので、state は shuka_list、action は wait と答えればよい（絞り込みが「報酬未受取」になっていないときだけ、右上の「表示順変更」を押す）。
-- クエスト詳細では、一番上の難易度の帯（「極」「究極」などの文字のあたり、帯の左〜中央）を押す。右端の「詳細」ボタンは押さない（ステージ詳細が開くだけ）。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
-- プレイタイプ選択（ソロ／マルチ募集）では青い「ソロ」を押す（fixed は true）。
-- 助っ人選択では「現在のフレンド使用キャラ」の一番上を押す。
-- デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間、デッキ名やキャラのあたり）を横にスワイプして切り替える（★5制限は書庫周回の右隣）。合っていれば「出撃」を tap。
-- 読み込み中・通信中・演出中は待つ（wait）。
-- リザルトやスペシャル報酬は画面を押して進める。OKボタンがあれば押す。
-- 確認ウィンドウはOKを押す（購入・オーブ消費・コンティニューは押さない）。
-- 負けた画面では「あきらめる」を押す。
-- 書庫ポイントが足りない・なくなったという表示が出たら stop（why に「書庫ポイント切れ」）。
-- 上に書いていない画面でも、ソロで書庫のクエストを先に進める操作がはっきりしていれば（ソロ、OK、次へ など）それを選ぶ。戻るのは、書庫と関係ない場所に来てしまったときだけ。
-- お金・オーブを使う画面や、どうしても分からない画面では stop。
+- ホーム画面：書庫のクエストをまだ1つも遊んでいなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップ。上の「SHORT CUT」や長押しは使わない。
+- クエスト一覧（ノーマル・イベントなどのアイコンが並ぶ）では「追憶の書庫」を押す。
+- 書庫の一覧（「モンスター名で検索」のバーがある）：プログラムがクエストを選ぶので wait。ただし流れに「絞り込みが必要」とあれば、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
+- 絞り込み・並び替えの窓：初クリア報酬を「報酬未受取」にして「決定」。
+- 助っ人選択では「現在のフレンド使用キャラ」の一番上のキャラを押す（fixed は true）。
+- デッキ選択でデッキ名が「書庫周回」「書庫★5制限」のどちらでもなければ、デッキ欄を横にスワイプして探す（★5制限は書庫周回の右隣）。
+- リザルト・スペシャル報酬・ステージクリア・モンスター獲得・ランクアップ・レベルアップ・ラック・ログインボーナス・日付が変わりましたなどは、画面を押すか「OK」「閉じる」「次へ」で進める。
+- お知らせ・イベント告知・キャンペーンの窓は「閉じる」や右上の「×」で閉じる。
+- 通信エラーは「リトライ」「再試行」「OK」。タイトル画面は画面を押して始める。
+- 負けた画面・コンティニュー確認では、コンティニューせず「あきらめる」（その後の確認も、あきらめる方）。
+- 書庫ポイントが足りない・ボックスがいっぱい・スタミナが足りない、など遊べなくなった表示は stop（why に理由）。
+- オーブ・お金を使う画面、購入画面、コンティニュー、どうしても分からない画面では stop。
+- 演出中・読み込み中・通信中は wait。
+- 上に書いていない画面でも、ソロで書庫のクエストを先に進める操作がはっきりしていれば（OK、次へ、閉じる など）それを選ぶ。戻るのは、書庫と関係ない場所に来てしまったときだけ。
 """
 SHUKA_ACT_FMT = """次の操作を1つ決めて、JSONだけで答えてください（説明文は不要）。座標はこの画像のピクセル（左上が0,0、幅{W}、高さ{H}）。
 {{"state":"<画面の名前: {states}>","action":"tap|longpress|swipe|wait|back|stop","x":0,"y":0,"x2":0,"y2":0,"why":"20文字以内","fixed":true,"quest":""}}
@@ -1324,6 +1444,20 @@ def find_labels(data, off, w, h):
     return [(nn, v[0], v[1]) for nn, v in res.items()] + [(0, x, y) for nn, x, y, sc in out if not nn]
 
 
+def pause(a, b):
+    """a human-like wait: usually a..b seconds, now and then a longer look"""
+    time.sleep(random.uniform(a, b) if random.random() > .07 else random.uniform(b + 1.5, b + 5))
+
+
+def log_line(A, msg):
+    print(f"書庫自動 {A.serial}: {msg}")
+
+
+def tap_back(A, w, h):
+    """the blue back arrow at the top left of menu screens"""
+    A.tap(w * random.uniform(.06, .11), h * random.uniform(.138, .152), random.random())
+
+
 class ShukaAuto:
     """one worker per instance: look -> decide (learned or AI) -> act -> random wait. Stops on its own when unsure."""
     def __init__(self, sh, adbs):
@@ -1397,7 +1531,7 @@ class ShukaAuto:
         x, y, top, bot = t
         if y - top > 15:
             self.drag_to(A, top, quick=True)
-        dur = random.uniform(2.2, 3.2); lag = .12
+        dur = random.uniform(3.4, 4.4); lag = .12
         th = threading.Thread(target=lambda: A.run("shell", "input", "swipe", *map(str, (x + random.randint(-2, 2), round(top), x + random.randint(-3, 3), round(bot), round(dur * 1000))), timeout=20), daemon=True)
         t0 = time.time(); th.start(); snaps = []
         x0, y0, x1, y1 = HEAD_BOX
@@ -1451,6 +1585,10 @@ class ShukaAuto:
             if y is not None and y <= min(lim, h * .62):
                 return ty, y
             st = self.sticky(data, off, w, h)
+            if st == G and row == 0:
+                t = self.thumb(A)
+                if t and t[1] - t[2] < 6:          # knob at the very top: G is the first group, its heading is the top one
+                    return t[1], h * .455
             past = st == G or (y is None and st in order and G in order and order.index(st) > order.index(G))
             d = -1 if past else 1
             if last and d != last: step = max(step / 2, 3)
@@ -1469,13 +1607,18 @@ class ShukaAuto:
             inf["msg"] = "書庫の一覧を見ています（スクロールバー）"; print(f"書庫自動 {A.serial}: {inf['msg']}")
             found = self.survey(A)
             order = list(dict.fromkeys(g for _, g in found))
+            if found and not any(canon(g) in GROUP_KEYS for g in order):     # nothing to play? look once more before giving up
+                log_line(A, f"一覧のグループ → {' / '.join(order)}（回すものが見えないので、もう一度見ます）")
+                found2 = self.survey(A)
+                if found2:
+                    found = found2; order = list(dict.fromkeys(g for _, g in found))
             print(f"書庫自動 {A.serial}: 一覧のグループ → {' / '.join(order) or '読めませんでした'}")
             if not found:
-                return False
-            G = next((g for g in GROUP_ORDER if g in order), None)
+                return self.pick_static(A, i, inf)
+            G = next((g for key in GROUP_KEYS for g in order if canon(g) == key), None)
             if not G:
-                self.run[i] = False; inf["msg"] = "止めました：残りは " + "・".join(order) + "（超絶以上かマルチ専用）"
-                print(f"書庫自動 {A.serial}: {inf['msg']}"); return True
+                self.run[i] = False; inf["msg"] = "止めました：書庫で回すクエストが残っていません（残り：" + "・".join(order) + "）"
+                log_line(A, inf["msg"]); return True
             span = self.span[1] - self.span[0]; n = inf["skip"].get(G, 0)
             ty = next(t for t, g in found if g == G) - span * random.uniform(.01, .02)
             ty, y = self.align(A, G, order, ty, span, n // 5)
@@ -1486,58 +1629,73 @@ class ShukaAuto:
         iy = y + w * (.146 + .18 * row); ix = w * (.13 + .181 * col)
         time.sleep(random.uniform(.5, 1.8))
         A.tap(ix + random.uniform(-.025, .025) * w, iy + random.uniform(-.025, .025) * w, random.random())
-        inf["pick"] = {"group": G, "ty": ty, "order": order, "span": span}; inf["steps"] += 1
+        inf["pick"] = {"group": G, "ty": ty, "order": order, "span": span}; inf["steps"] += 1; inf["from_list"] = True
         inf["msg"] = f"shuka_list：「{G}」の{n + 1}番目を押した"; print(f"書庫自動 {A.serial}: {inf['msg']}")
-        inf["hist"] = (inf["hist"] + [f"書庫の一覧で「{G}」グループのクエストを押した" + ("（★5制限のクエスト）" if "★5" in G else "")])[-14:]
+        inf["hist"] = (inf["hist"] + [f"書庫の一覧で「{G}」グループのクエストを押した" + ("（★5制限のクエスト）" if canon(G) == "star5" else "")])[-14:]
         time.sleep(random.uniform(1, 2))
         return True
+
+    def pick_static(self, A, i, inf):
+        """the list fits on one screen (no scrollbar): find a known heading on screen, by priority, and tap under it"""
+        data, off, w, h = A.raw_frame()
+        names = list(dict.fromkeys(G["name"] for G in self.groups))
+        for key in GROUP_KEYS:
+            for G in names:
+                if canon(G) != key: continue
+                y = self.heading_in_list(data, off, w, h, G)
+                if y is None and self.sticky(data, off, w, h) == G: y = h * .455
+                if y is None: continue
+                n = inf.setdefault("skip", {}).get(G, 0)
+                pause(.5, 1.6)
+                A.tap(w * (.13 + .181 * (n % 5)) + random.uniform(-.025, .025) * w, y + w * (.146 + .18 * (n // 5)) + random.uniform(-.025, .025) * w, random.random())
+                inf["pick"] = {"group": G}; inf["from_list"] = True; inf["steps"] += 1
+                inf["msg"] = f"shuka_list：「{G}」の{n + 1}番目を押した（スクロールなし）"; log_line(A, inf["msg"])
+                time.sleep(random.uniform(1, 2)); return True
+        return False
 
     def save_pos(self):
         try: json.dump(self.pos, open(SHUKA_POS, "w", encoding="utf-8"))
         except Exception: pass
 
+    def deck_now(self, A, data, off, w, h):
+        """which deck is shown: learned looks of this account's deck name, else the AI reads the name crop once"""
+        decks = self.pos.setdefault("decknames", {}).setdefault(A.serial, [])     # [[kind, bits]]
+        bits = deck_bits(data, off, w, h)
+        best = min(decks, key=lambda d: bits_dist(bits, d[1]), default=None)
+        if best and bits_dist(bits, best[1]) < .05:
+            return best[0]
+        kind, txt = ask_claude_deckname(png_crop(data, off, w, h, DECK_BOX[0] - .06, DECK_BOX[1] - .01, DECK_BOX[2] + .06, DECK_BOX[3] + .01))
+        with self.sh.lock: self.sh.ai_calls += 1
+        if not kind: return None
+        log_line(A, f"デッキ名を読みました →「{txt}」（{kind}）")
+        decks.append([kind, [round(v, 3) for v in bits]]); del decks[:-12]; self.save_pos()
+        return kind
+
     def deck(self, A, i, inf, want):
-        """deck select: read which deck is shown (learned look, AI only for a new look), swipe between 書庫周回 and
-        書庫★5制限 if needed (★5 is to the right), then 出撃. Returns False to let the AI handle it."""
-        decks = self.pos.setdefault("decks", {}).setdefault(A.serial, {"normal": [], "star5": []})
+        """deck select: make sure the shown deck is 書庫周回 / 書庫★5制限 as needed (★5 is the next one to the right), then 出撃"""
         name = "書庫★5制限" if want == "star5" else "書庫周回"
-        for _ in range(4):
+        tried = 0; last_move = None
+        for _ in range(6):
             data, off, w, h = A.raw_frame()
-            ds = _gray_grid(data, off, w, h, .1, .75, 12, 14)
-            cur, bd = None, .03
-            for k, sigs in decks.items():
-                for g in sigs:
-                    d = sig_dist(ds, g)
-                    if d < bd: cur, bd = k, d
-            if cur is None:
-                r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
-                with self.sh.lock: self.sh.ai_calls += 1
-                if not r: return False
-                try:
-                    self.pos["go"] = [float(r["go"][0]) * 2 / w, float(r["go"][1]) * 2 / h]
-                    self.pos["swipe"] = {"y": float(r["name_y"]) * 2 / h}
-                except Exception: pass
-                cur = r.get("deck")
-                print(f"書庫自動 {A.serial}: デッキを読みました → {r.get('name')}（{cur}）")
-                if cur in decks: decks[cur] = (decks[cur] + [[round(v, 1) for v in ds]])[-8:]
-                self.save_pos()
-                if cur not in ("normal", "star5"): return False
+            if not is_deck_select(data, off, w, h): return True       # the screen moved on
+            cur = self.deck_now(A, data, off, w, h)
             if cur == want:
-                if "go" not in self.pos: return False
-                gx, gy = self.pos["go"]
-                time.sleep(random.uniform(.6, 1.8))
-                A.tap(w * gx + random.uniform(-.02, .02) * w, h * gy + random.uniform(-.008, .008) * h, random.random())
-                inf["deck"] = want
-                inf["msg"] = f"deck_select：{name}で出撃"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+                pause(.5, 1.6)
+                A.tap(w * random.uniform(.43, .56), h * random.uniform(.812, .838), random.random())
+                inf["msg"] = f"デッキ：{name}で出撃"; log_line(A, inf["msg"])
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
-                time.sleep(random.uniform(1, 2)); return True
-            sw = self.pos.get("swipe")
-            if not sw: return False
-            x0 = w * random.uniform(.45, .55); d = w * random.uniform(.3, .4) * (1 if want == "normal" else -1)
-            yy = h * sw["y"] + random.uniform(-8, 8)
-            time.sleep(random.uniform(.6, 1.4))
-            A.run("shell", "input", "swipe", *map(str, (round(x0 - d / 2), round(yy), round(x0 + d / 2), round(yy + random.uniform(-6, 6)), round(random.uniform(350, 600)))), timeout=15)
-            print(f"書庫自動 {A.serial}: デッキを{name}へ切り替え"); time.sleep(random.uniform(1.2, 2))
+                inf["deck"] = want; time.sleep(random.uniform(1.5, 2.5)); return True
+            if cur not in ("normal", "star5") and tried >= 3:
+                return False                                  # an unknown deck and swiping did not find ours: let the AI look
+            # 書庫周回 -> ★5 is one to the right (swipe the finger to the left); back is the other way. Unknown: try right first.
+            if cur in ("normal", "star5"): right = want == "star5"
+            else: right = (not last_move) if last_move is not None else True     # overshot onto another deck: go back
+            last_move = right
+            x0 = w * random.uniform(.46, .54); d = w * random.uniform(.36, .44) * (-1 if right else 1); yy = h * random.uniform(.51, .56)
+            pause(.4, 1.2)
+            A.run("shell", "input", "swipe", *map(str, (round(x0 - d / 2), round(yy), round(x0 + d / 2), round(yy + random.uniform(-8, 8)), round(random.uniform(280, 480)))), timeout=15)
+            tried += 1; log_line(A, f"デッキを切り替え（{'右' if right else '左'}へ）")
+            time.sleep(random.uniform(1.1, 1.8))
         return False
 
     def act(self, A, a, k, seed):
@@ -1555,145 +1713,213 @@ class ShukaAuto:
         elif kind == "back":
             A.run("shell", "input", "keyevent", "4", timeout=10)
 
+    # ------------------------------------------------------------------------------------------------
+    # one worker per instance. Each round: grab the screen, then the first rule that fits acts:
+    #   battle (our turn: shoot / otherwise wait) -> loading -> home -> 書庫 list -> deck select -> solo/multi
+    #   -> quest page -> (anything else) a learned press, or the AI once.
+    # The main road needs no AI at all; the AI only sees screens the code does not know.
+    # ------------------------------------------------------------------------------------------------
     def loop(self, i, A):
-        inf = self.info[i]; same = 0; last_sig = None
+        inf = self.info[i]; errs = 0
+        inf.update(same=0, last_sig=None)
         while True:
             if not self.run[i]:
                 time.sleep(1); continue
             try:
                 if not A.size: A.connect()
-                data, off, w, h = A.raw_frame()
-                k = turn_from_rgba(data, off, w, h)
-                if k:   # our turn in a battle
-                    inf["battle_t"] = time.time()
-                    inf["msg"] = f"バトル：{ORD.get(k)} の番"
-                    time.sleep(random.uniform(.5, 3))
-                    # no AI: read the 1st..4th labels, aim at the nearest other ball (friendship does the rest)
-                    L = find_labels(data, off, w, h)
-                    me = next(((x, y) for n, x, y in L if n == k), None)
-                    others = [(x, y) for n, x, y in L if (n and n != k) or (not n and me and math.hypot(x - me[0], y - me[1]) > w * .08)]
-                    if me and others:
-                        tx, ty = min(others, key=lambda p: math.hypot(p[0] - me[0], p[1] - me[1]))
-                        ang = math.degrees(math.atan2(ty - me[1], tx - me[0])) + random.uniform(-3.5, 3.5)
-                        cx, cy = me; how_s = "味方を狙った"
-                    else:      # could not read: a shallow sideways shot (around 15° or 195°, never the exact same angle)
-                        ang = random.choice((15, 195, -15, 165)) + random.uniform(-7, 7)
-                        cx, cy = (me if me else (w * random.uniform(.35, .65), h * random.uniform(.45, .6))); how_s = "読めないので横向き"
-                    A.shoot(ang, cx, cy, 1200, 120, True, "auto", random.random())
-                    inf["steps"] += 1; inf["msg"] = f"バトル：{ORD.get(k)} {how_s}（{ang:.0f}°）"; print(f"書庫自動 {A.serial}: {inf['msg']}")
-                    inf["hist"] = (inf["hist"] + [f"バトルで打った"])[-14:]
-                    time.sleep(random.uniform(6, 9)); continue
-                if self.sh._panel(data, off, w, h):          # battle, not our turn
-                    inf["battle_t"] = time.time()
-                    inf["msg"] = "バトル：待ち"; time.sleep(random.uniform(1.5, 2.5)); continue
-                sig = screen_sig(data, off, w, h)
-                if sum(_gray_grid(data, off, w, h, 0, 1, 6, 10)) / 60 < 18:
-                    inf["msg"] = "読み込み中"; time.sleep(random.uniform(1, 2)); continue
-                same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
-                if same >= 15:
-                    self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
-                SL = min((L for L in self.sh.learn if L.get("state") == "shuka_list"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if inf.get("after_lp") and SL and sig_dist(sig, SL["sig"]) < .06:
-                    if is_shuka_list(data, off, w, h):
-                        inf["after_lp"] = False
-                    else:     # the page of the quest we just cleared (long press jumps there): back to the list, no AI
-                        time.sleep(random.uniform(.8, 2.2))
-                        A.tap(w * random.uniform(.06, .11), h * random.uniform(.138, .152), random.random())
-                        inf["after_lp"] = False; inf["steps"] += 1
-                        inf["msg"] = "クリアしたクエストのページ：戻る"; print(f"書庫自動 {A.serial}: {inf['msg']}")
-                        inf["hist"] = (inf["hist"] + ["クリアしたクエストのページから左上の戻る矢印で一覧へ戻った"])[-14:]
-                        time.sleep(random.uniform(1, 1.8)); continue
-                # the 書庫 list (known look): pick the quest in code, no AI
-                SL = min((L for L in self.sh.learn if L.get("state") == "shuka_list"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if is_shuka_list(data, off, w, h) and same < 3 and not inf.get("_pickfail"):
-                    if self.pick_quest(A, i, inf): continue
-                    inf["_pickfail"] = True
-                Gp = (inf.get("pick") or {}).get("group")
-                want = "star5" if Gp and "★5" in Gp else "normal"
-                DS = min((L for L in self.sh.learn if L.get("state") == "deck_select"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if DS and sig_dist(sig, DS["sig"]) < .06 and same < 3:
-                    if self.deck(A, i, inf, want): continue
-                # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
-                ctx = "after" if inf["clears"] else "first"
-                fs = full_sig(data, off, w, h)
-                # screens under the 書庫 title band all share the title and menu: there the middle must match too
-                shared = bool(SL and sig_dist(sig, SL["sig"]) < .06)
-                L = min((L for L in self.sh.learn if L.get("act") and (L.get("state") != "home" or L["act"].get("ctx", ctx) == ctx)
-                         and sig_dist(sig, L["sig"]) < .05 and (not shared or L["act"].get("full"))),
-                        key=lambda L: sig_dist(fs, L["act"]["full"]) if shared else sig_dist(sig, L["sig"]), default=None)
-                if L and shared and sig_dist(fs, L["act"]["full"]) > .09: L = None
-                if L and not is_shuka_list(data, off, w, h) and same < 2:
-                    a = dict(L["act"]); a.setdefault("state", L.get("state")); a.setdefault("why", L.get("note", "")); how = "覚えた操作"; kk = 2
-                else:
-                    if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
-                        with self.sh.lock: L.pop("act", None); self.sh.save()
-                    if time.time() - inf.get("battle_t", 0) < 20:     # mid-battle effects / enemy turn / stage change: just wait, no AI
-                        inf["msg"] = "バトル：演出中"; time.sleep(random.uniform(1.2, 2)); continue
-                    hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+                self.step(i, A, inf); errs = 0
+            except Exception as e:
+                errs += 1; inf["msg"] = "エラー：" + str(e)[:80]; log_line(A, inf["msg"])
+                time.sleep(5)
+                if errs >= 3:          # BlueStacks or adb went away: connect again
+                    try: A.connect()
+                    except Exception: pass
+                if errs >= 30:
+                    self.run[i] = False; inf["msg"] = "止めました：BlueStacks とつながりません"
 
-                    a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
-                    with self.sh.lock: self.sh.ai_calls += 1
-                    if not a:
-                        inf["msg"] = "AI：" + err; time.sleep(8); continue
-                    how = "AI"; kk = 2
-                    # remember it when this screen always gets the same press. Screens whose press depends on the quest
-                    # (which quest in the list, the deck, the filter steps) are always judged fresh. Home is remembered twice:
-                    # once for the first visit (tap) and once for after a clear (long press).
-                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "deck_select", "filter", "battle", "other", "loading"):
-                        with self.sh.lock:
-                            self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
-                            self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, full=[round(v, 1) for v in full_sig(data, off, w, h)], **({"ctx": ctx} if a.get("state") == "home" else {})); self.sh.save()
-                st = a.get("state", "?"); why = a.get("why", "")
-                if st == "battle": inf["battle_t"] = time.time()
-                if st != "shuka_list":
-                    inf["_pickfail"] = False
-                elif how == "AI" and is_shuka_list(data, off, w, h) and not inf.get("_pickfail") and not (a["action"] == "tap" and float(a.get("y", 0) or 0) * kk < h * .3):
-                    # the AI says this is the list: remember the look, then pick in code (the AI only handles the filter button up top)
-                    if not (SL and sig_dist(sig, SL["sig"]) < .06):
-                        with self.sh.lock: self.sh.add("shuka_list", "書庫の一覧", sig, png_small(data, off, w, h, 6))
-                    if self.pick_quest(A, i, inf): continue
-                    inf["_pickfail"] = True
-                    inf["hist"] = (inf["hist"] + ["プログラムがスクロールバーでクエストを選べなかった。一覧から極→★5制限→究極→激究極の順で左上のクエストを選んで"])[-14:]
-                    continue
-                if st == "deck_select" and how == "AI":      # remember the screen, then the deck is handled in code
-                    if not (DS and sig_dist(sig, DS["sig"]) < .06):
-                        with self.sh.lock: self.sh.add("deck_select", "デッキ選択", sig, png_small(data, off, w, h, 6))
-                    if self.deck(A, i, inf, want): continue
-                # lost twice in a row on the same quest: skip it next time (tap the next one in the group)
-                if st == "lose" and not inf.get("_lost") and Gp:
-                    f = inf.setdefault("fails", {}); f[Gp] = f.get(Gp, 0) + 1
-                    if f[Gp] >= 2:
-                        f[Gp] = 0; inf.setdefault("skip", {})[Gp] = inf["skip"].get(Gp, 0) + 1
-                        print(f"書庫自動 {A.serial}: 「{Gp}」のこのクエストは2回負けたので次から飛ばします")
-                inf["_lost"] = st == "lose"
-                if st == "result" and Gp: inf.setdefault("fails", {})[Gp] = 0
-                if st == "shuka_list" and a["action"] == "swipe":    # gentle, slow finger scroll (no fling)
-                    x0 = w * random.uniform(.35, .6); dy = max(-.35, min(.35, (float(a.get("y2", 0) or 0) - float(a.get("y", 0) or 0)) * kk / h)) or -.2
-                    y0 = h * (.72 if dy < 0 else .5)
-                    A.run("shell", "input", "swipe", *map(str, (round(x0), round(y0), round(x0 + random.uniform(-15, 15)), round(y0 + dy * h), round(random.uniform(900, 1300)))), timeout=15)
-                    inf["steps"] += 1; inf["hist"] = (inf["hist"] + ["一覧を少しスクロールした"])[-14:]
-                    time.sleep(random.uniform(1, 1.8)); continue
-                if a.get("quest") and st in ("quest_detail", "helper_select", "deck_select", "loading"): inf["quest"] = str(a["quest"])[:40]
-                inf["msg"] = f"{st}：{a['action']}（{how}）{why}"
-                print(f"書庫自動 {A.serial}: {inf['msg']}")
-                if a["action"] == "stop":
-                    self.run[i] = False; inf["msg"] = "止めました：" + (why or st); continue
-                if a["action"] == "wait":
-                    time.sleep(random.uniform(1, 2.5)); continue
-                # human-like pause before acting: usually short, sometimes a longer look (the AI already took a few seconds)
-                time.sleep(random.uniform(.6, 2.5) if how == "AI" else (random.uniform(4, 9) if random.random() < .12 else random.uniform(1, 3.5)))
-                self.act(A, a, kk, random.random())
-                if st == "home" and a["action"] == "longpress": inf["after_lp"] = True
-                inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
-                if st == "result" and not inf.get("_res"):
+    def stop(self, i, A, inf, why):
+        self.run[i] = False; inf["msg"] = "止めました：" + why; log_line(A, inf["msg"])
+
+    def battle(self, i, A, inf, data, off, w, h, k):
+        inf["battle_t"] = inf["turn_t"] = time.time(); inf["in_quest"] = True
+        pause(.4, 2.2)
+        data, off, w, h = A.raw_frame()                     # the field may have moved while we waited
+        if not turn_from_rgba(data, off, w, h): return
+        L = find_labels(data, off, w, h)
+        me = next(((x, y) for n, x, y in L if n == k), None)
+        others = [(x, y) for n, x, y in L if (n and n != k) or (not n and me and math.hypot(x - me[0], y - me[1]) > w * .08)]
+        if me and others:      # aim at the nearest other ball: friendship combos do the work
+            tx, ty = min(others, key=lambda p: math.hypot(p[0] - me[0], p[1] - me[1]))
+            ang = math.degrees(math.atan2(ty - me[1], tx - me[0])) + random.uniform(-3.5, 3.5)
+            cx, cy = me; how = "味方を狙った"
+        else:                  # labels not read: a shallow sideways shot (about 15 / 195 / -15 / 165 degrees, never exact)
+            ang = random.choice((15, 195, -15, 165)) + random.uniform(-7, 7)
+            cx, cy = me if me else (w * random.uniform(.35, .65), h * random.uniform(.45, .6)); how = "横向き"
+        A.shoot(ang, cx, cy, 1200, 120, True, "auto", random.random())
+        inf["steps"] += 1; inf["msg"] = f"バトル：{ORD.get(k)} {how}（{ang:.0f}°）"; log_line(A, inf["msg"])
+        time.sleep(random.uniform(5, 7.5))
+
+    def rule(self, inf, name):
+        """count how many times in a row the same code rule fired; after 4 the AI gets a look instead"""
+        if inf.get("h_last") == name: inf["h_n"] = inf.get("h_n", 0) + 1
+        else: inf["h_last"], inf["h_n"] = name, 1
+        return inf["h_n"] <= 4
+
+    def step(self, i, A, inf):
+        data, off, w, h = A.raw_frame()
+        now = time.time()
+        # ---- battle ----
+        k = turn_from_rgba(data, off, w, h)
+        if k:
+            return self.battle(i, A, inf, data, off, w, h, k)
+        if self.sh._panel(data, off, w, h):
+            if not inf.get("in_quest"): inf["turn_t"] = now        # a new quest: start the clock for the failsafes below
+            inf["battle_t"] = now; inf["in_quest"] = True; inf["msg"] = "バトル：待ち"
+            # nothing to do for long (e.g. "タップしてひろえ" at a stage end): tap the upper field now and then
+            quiet = now - inf.get("turn_t", now)
+            if quiet > 60 and now - inf.get("blind_t", 0) > 20:     # our turn mark may be missed: a sideways shot (ignored if not our turn)
+                ang = random.choice((15, 195, -15, 165)) + random.uniform(-7, 7)
+                A.shoot(ang, w * random.uniform(.35, .65), h * random.uniform(.45, .6), 1200, 120, True, "auto", random.random())
+                inf["blind_t"] = now; log_line(A, f"バトル：番が読めないまま長いので横向きに打った（{ang:.0f}°）")
+            elif quiet > 25 and now - inf.get("poke_t", 0) > 9:
+                A.tap(w * random.uniform(.3, .7), h * random.uniform(.22, .32), random.random()); inf["poke_t"] = now
+            if not (quiet > 30 and now - inf.get("look_t", 0) > 20):
+                time.sleep(random.uniform(1.2, 2)); return
+            inf["look_t"] = now; inf["force_look"] = True      # fall through: a learned press or the AI looks at this screen
+        if is_loading(data, off, w, h):
+            inf["msg"] = "読み込み中"; time.sleep(random.uniform(.8, 1.6)); return
+        # ---- stuck on one screen? ----
+        sig = screen_sig(data, off, w, h)
+        inf["same"] = inf["same"] + 1 if inf["last_sig"] and sig_dist(sig, inf["last_sig"]) < .02 else 0
+        inf["last_sig"] = sig; same = inf["same"]
+        if same >= 15:
+            return self.stop(i, A, inf, "同じ画面から進めません")
+        G = (inf.get("pick") or {}).get("group")
+        want = "star5" if canon(G) == "star5" else "normal"
+
+        # ---- home ----
+        if is_home(data, off, w, h) and same < 4 and self.rule(inf, "home"):
+            if inf.get("in_quest"):          # back home after a quest: it was a clear unless we gave up
+                if not inf.get("lost"):
                     inf["clears"] += 1
-                    self.log.append({"t": time.strftime("%m/%d %H:%M"), "i": i + 1, "quest": inf.get("quest") or "（名前不明）", "orb": 1})
+                    if G: inf.setdefault("fails", {})[G] = 0
+                    q = inf.get("quest") or (f"{G}" if G else "（名前不明）")
+                    self.log.append({"t": time.strftime("%m/%d %H:%M"), "i": i + 1, "quest": q, "orb": 1})
                     try: json.dump(self.log, open(SHUKA_LOG, "w", encoding="utf-8"), ensure_ascii=False)
                     except Exception: pass
-                inf["_res"] = st == "result"
-                time.sleep(random.uniform(.8, 1.6))
-            except Exception as e:
-                inf["msg"] = "エラー：" + str(e)[:80]; time.sleep(5)
+                    log_line(A, f"クリア {inf['clears']} 回目（{q}）")
+                inf.update(in_quest=False, lost=False, quest="")
+            pause(.8, 2.5)
+            if inf.get("played"):            # long press: jumps to the 書庫 quest we last played, then back to the list
+                x, y = w * random.uniform(.46, .54), h * random.uniform(.77, .81)
+                A.run("shell", "input", "swipe", *map(str, (round(x), round(y), round(x + random.uniform(-4, 4)), round(y + random.uniform(-4, 4)), round(random.uniform(950, 1300)))), timeout=15)
+                inf["after_lp"] = True; inf["msg"] = "ホーム：クエストを長押し"
+            else:                            # first time: a plain tap on the lower half (the SHORT CUT part jumps elsewhere)
+                A.tap(w * random.uniform(.44, .56), h * random.uniform(.825, .855), random.random())
+                inf["msg"] = "ホーム：クエストをタップ"
+            log_line(A, inf["msg"]); inf["steps"] += 1; inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]
+            time.sleep(random.uniform(1.5, 2.5)); return
+
+        # ---- 書庫 list ----
+        if is_shuka_list(data, off, w, h):
+            inf["after_lp"] = False
+            if not inf.get("need_filter") and not inf.get("_pickfail") and same < 3 and self.rule(inf, "list"):
+                if self.pick_quest(A, i, inf): return
+                inf["_pickfail"] = True
+                inf["hist"] = (inf["hist"] + ["プログラムがスクロールバーでクエストを選べなかった。極→究極★5以下制限→究極→激究極の順に、そのグループの左上のクエストを押して"])[-14:]
+            # need_filter / pick failed: the AI below handles it
+        else:
+            inf["_pickfail"] = False
+
+        # ---- deck select ----
+        if is_deck_select(data, off, w, h) and same < 3 and self.rule(inf, "deck"):
+            if self.deck(A, i, inf, want): return
+            inf["hist"] = (inf["hist"] + [f"デッキを{'書庫★5制限' if want == 'star5' else '書庫周回'}にしたいが、プログラムでは見つからなかった"])[-14:]
+
+        # ---- solo / multi ----
+        elif is_play_type(data, off, w, h) and same < 3 and self.rule(inf, "solo"):
+            pause(.6, 1.8)
+            A.tap(w * random.uniform(.15, .36), h * random.uniform(.47, .6), random.random())
+            inf["msg"] = "ソロを押した"; log_line(A, inf["msg"]); inf["steps"] += 1
+            inf["hist"] = (inf["hist"] + ["ソロを押した"])[-14:]; time.sleep(random.uniform(1.2, 2)); return
+
+        # ---- quest page (difficulty bands) ----
+        else:
+            bands = [] if is_shuka_list(data, off, w, h) else quest_bands(data, off, w, h)
+            if bands and same < 3 and self.rule(inf, "quest"):
+                if inf.get("after_lp"):          # reached by the long press from home: back to the list
+                    inf["after_lp"] = False; pause(.6, 1.8); tap_back(A, w, h)
+                    inf["msg"] = "長押しで来たクエストのページ：戻る"
+                elif inf.get("from_list") and has_clear_tag(data, off, w, h):
+                    # a quest whose reward is already taken was in the list: the 報酬未受取 filter is off
+                    inf["from_list"] = False; inf["need_filter"] = True; pause(.6, 1.6); tap_back(A, w, h)
+                    inf["msg"] = "CLEAR済みのクエスト：戻って絞り込みを直す"
+                    inf["hist"] = (inf["hist"] + ["一覧にCLEAR済みが出ていた。絞り込みが必要：表示順変更→初クリア報酬を「報酬未受取」→決定"])[-14:]
+                else:                            # the top band is the hardest difficulty: play that one
+                    inf["from_list"] = False; inf["played"] = True
+                    pause(.6, 1.8)
+                    A.tap(w * random.uniform(.22, .55), bands[0] + h * random.uniform(-.008, .008), random.random())
+                    inf["msg"] = f"クエストのページ：一番上の難易度（{G or '?'}）"
+                log_line(A, inf["msg"]); inf["steps"] += 1; inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]
+                time.sleep(random.uniform(1.2, 2)); return
+
+        # ---- anything else: a learned press for this exact look, or the AI ----
+        fs = full_sig(data, off, w, h)
+        L = min((L for L in self.sh.learn if L.get("act") and sig_dist(sig, L["sig"]) < .05
+                 and (L["act"].get("full") is not None)), key=lambda L: sig_dist(fs, L["act"]["full"]), default=None)
+        if L and sig_dist(fs, L["act"]["full"]) > (.14 if L.get("state") == "result" else .09): L = None
+        if L and same >= 3:                      # pressed it and nothing changed: forget it
+            with self.sh.lock: L.pop("act", None); self.sh.save()
+            L = None
+        if L:
+            a = dict(L["act"]); how = "覚えた操作"
+            if a.get("v") != 2:                  # learned before v76: coordinates on the half-size image
+                for x in ("x", "y", "x2", "y2"):
+                    if a.get(x) is not None: a[x] = float(a[x]) * 2
+        else:
+            if now - inf.get("battle_t", 0) < 20 and not inf.pop("force_look", False):     # just after battle activity
+                inf["msg"] = "バトル：演出中"; time.sleep(random.uniform(1.2, 2)); return
+            # only ask about a screen that holds still (no AI for screens in the middle of an animation)
+            time.sleep(.7)
+            d2, o2, w2, h2 = A.raw_frame()
+            if sig_dist(full_sig(d2, o2, w2, h2), fs) > .03 and same < 6:
+                inf["msg"] = "画面が動いています"; return
+            hist = [f"この周回でクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+            a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
+            with self.sh.lock: self.sh.ai_calls += 1
+            if not a:
+                inf["msg"] = "AI：" + err; time.sleep(8); return
+            how = "AI"
+            for x in ("x", "y", "x2", "y2"):     # AI coordinates are on the half-size image
+                if a.get(x) is not None: a[x] = float(a[x]) * 2
+            if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("home", "shuka_list", "quest_detail", "play_type", "deck_select", "filter", "battle", "loading", "other"):
+                with self.sh.lock:
+                    self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
+                    self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, full=[round(v, 1) for v in fs], v=2)
+                    self.sh.save()
+        st = a.get("state", "?"); why = a.get("why", ""); inf["h_last"] = None
+        # never spend orbs / money, never continue
+        if a["action"] in ("tap", "longpress") and any(t in why for t in ("購入", "コンティニュー", "オーブを使", "回復する")) and "あきらめ" not in why:
+            return self.stop(i, A, inf, f"危ない操作をしそうになったので止めました（{why}）")
+        if st == "lose":
+            if not inf.get("lost") and G:
+                f = inf.setdefault("fails", {}); f[G] = f.get(G, 0) + 1
+                if f[G] >= 2:
+                    f[G] = 0; inf.setdefault("skip", {})[G] = inf["skip"].get(G, 0) + 1
+                    log_line(A, f"「{G}」のこのクエストは2回負けたので、次からは隣のクエストにします")
+            inf["lost"] = True
+        if st == "battle": inf["battle_t"] = now
+        if a.get("quest"): inf["quest"] = str(a["quest"])[:40]
+        if st == "filter" or (st == "shuka_list" and a["action"] == "tap"): inf["need_filter"] = False
+        inf["msg"] = f"{st}：{a['action']}（{how}）{why}"; log_line(A, inf["msg"])
+        if a["action"] == "stop":
+            return self.stop(i, A, inf, why or st)
+        if a["action"] == "wait":
+            time.sleep(random.uniform(1, 2.5)); return
+        pause(.6, 2.2) if how == "AI" else pause(1, 3)
+        self.act(A, a, 1, random.random())
+        inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
+        time.sleep(random.uniform(.8, 1.6))
 
 
 SHUKA_PAGE = """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
