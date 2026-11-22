@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 56
+HELPER_VER = 57
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1001,7 +1001,8 @@ SHUKA_ACT_FMT = """次の操作を1つ決めて、JSONだけで答えてくだ�
 {{"state":"<画面の名前: {states}>","action":"tap|longpress|swipe|wait|back|stop","x":0,"y":0,"x2":0,"y2":0,"why":"20文字以内","fixed":true}}
 - tap / longpress は押す点の中心。swipe は (x,y) から (x2,y2) へ。
 - fixed は「この画面ならいつも同じ場所を押せばいい」なら true、そのときの中身（どのクエストか等）で押す場所が変わるなら false。
-直前の操作（古い順）: {hist}"""
+これまでの流れ（古い順）: {hist}
+思っていた画面と違うとき（押したのに進んでいない、知らない画面が出た）は、流れから今どこにいるかを考えて軌道修正してください。"""
 
 
 def ask_claude_action(png, W, H, hist):
@@ -1009,7 +1010,7 @@ def ask_claude_action(png, W, H, hist):
     key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
     if not key:
         return None, "APIキーが未設定"
-    text = SHUKA_GOAL + "\n" + SHUKA_ACT_FMT.format(W=W, H=H, states="|".join(SHUKA_STATES), hist=" / ".join(hist[-6:]) or "なし")
+    text = SHUKA_GOAL + "\n" + SHUKA_ACT_FMT.format(W=W, H=H, states="|".join(SHUKA_STATES), hist=" / ".join(hist[-14:]) or "なし")
     body = {"model": SHUKA_MODEL, "max_tokens": 1500, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
         {"type": "text", "text": text}]}]}
@@ -1107,22 +1108,15 @@ class ShukaAuto:
                 if sum(_gray_grid(data, off, w, h, 0, 1, 6, 10)) / 60 < 18:
                     inf["msg"] = "読み込み中"; time.sleep(random.uniform(2, 4)); continue
                 same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
-                if same >= 8:
+                if same >= 15:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
-                # a learned fixed action for this look?
-                L = min((L for L in self.sh.learn if L.get("act")), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if L and sig_dist(sig, L["sig"]) < .05:
-                    a = dict(L["act"]); how = "覚えた操作"; kk = w / L["act"].get("W", w // 2) if L["act"].get("W") else 2
-                else:
-                    a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, inf["hist"])
-                    with self.sh.lock: self.sh.ai_calls += 1
-                    if not a:
-                        inf["msg"] = "AI：" + err; time.sleep(8); continue
-                    how = "AI"; kk = 2
-                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "quest_detail", "deck_select", "filter", "quest_list"):
-                        with self.sh.lock:
-                            self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
-                            self.sh.learn[-1]["act"] = {**{x: a.get(x) for x in ("action", "x", "y", "x2", "y2")}, "W": w // 2}; self.sh.save()
+                # every step is decided by the AI, with what happened before as context (it can correct itself)
+                hist = inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+                a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
+                with self.sh.lock: self.sh.ai_calls += 1
+                if not a:
+                    inf["msg"] = "AI：" + err; time.sleep(8); continue
+                how = "AI"; kk = 2
                 st = a.get("state", "?"); why = a.get("why", "")
                 inf["msg"] = f"{st}：{a['action']}（{how}）{why}"
                 print(f"書庫自動 {A.serial}: {inf['msg']}")
@@ -1132,7 +1126,7 @@ class ShukaAuto:
                     time.sleep(random.uniform(2, 5)); continue
                 time.sleep(random.uniform(2, 15))                       # human-like pause before acting
                 self.act(A, a, kk, random.random())
-                inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-12:]
+                inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
                 if st == "result": inf["clears"] += 0.25
                 time.sleep(random.uniform(1.5, 3))
             except Exception as e:
