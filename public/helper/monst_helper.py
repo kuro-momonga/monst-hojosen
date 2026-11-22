@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 63
+HELPER_VER = 64
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -819,6 +819,11 @@ def screen_sig(data, off, w, h):
     return _gray_grid(data, off, w, h, .12, .24, 24, 6) + _gray_grid(data, off, w, h, .92, 1.0, 24, 3)
 
 
+def list_sig(data, off, w, h):
+    """the middle of the screen (the scrolling list), to see whether a scroll moved anything"""
+    return _gray_grid(data, off, w, h, .3, .9, 12, 16)
+
+
 def sig_dist(a, b):
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a) / 255
 
@@ -836,6 +841,21 @@ def png_small(data, off, w, h, step=4):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b"")
 
 
+AI_USE = {"in": 0, "out": 0}
+YEN_PER_USD = 155
+
+
+def ai_yen():
+    """real cost so far from the token counts the API reports (Haiku 5.5: $0.10 in / $0.50 out per 1M tokens)"""
+    return (AI_USE["in"] * 0.10 + AI_USE["out"] * 0.50) / 1e6 * YEN_PER_USD
+
+
+def _count(j):
+    u = j.get("usage") or {}
+    AI_USE["in"] += int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0) or 0) + int(u.get("cache_creation_input_tokens", 0) or 0)
+    AI_USE["out"] += int(u.get("output_tokens", 0))
+
+
 def ask_claude_state(png):
     """unknown screen -> ask Claude (Haiku) which screen it is. Returns (state, note, raw text)"""
     import base64, urllib.request, urllib.error
@@ -851,7 +871,7 @@ def ask_claude_state(png):
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=40) as r:
-            j = json.loads(r.read())
+            j = json.loads(r.read()); _count(j)
     except urllib.error.HTTPError as e:
         msg = e.read().decode(errors="ignore")[:300]
         print("書庫: AIへの問い合わせに失敗:", e.code, msg)
@@ -920,7 +940,7 @@ class Shuka:
         st = self.inst[i]; prev_sig = None; waits = 0
         while True:
             time.sleep(random.uniform(2.5, 4.0))
-            if not self.on:
+            if not self.on or (getattr(self, "auto", None) and self.auto.run[i]):
                 continue
             try:
                 if not A.size: A.connect()
@@ -976,7 +996,7 @@ class Shuka:
         return True
 
     def status(self):
-        return {"on": self.on, "ai_calls": self.ai_calls, "learned": len(self.learn), "key": bool(KEY_FILE and os.path.exists(KEY_FILE)),
+        return {"on": self.on, "ai_calls": self.ai_calls, "yen": round(ai_yen(), 3), "tok": dict(AI_USE), "learned": len(self.learn), "key": bool(KEY_FILE and os.path.exists(KEY_FILE)),
                 "states": SHUKA_STATES, "learn": [{k: L.get(k) for k in ("id", "state", "note", "n")} for L in self.learn], "inst": [{k: v for k, v in s.items() if k in ("serial", "state", "note", "how", "t")} for s in self.inst]}
 
 
@@ -988,7 +1008,7 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - ホーム画面：この周回でまだ書庫のクエストを1つもクリアしていなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップし、クエスト一覧で「追憶の書庫」を押す。ボタン上部の「SHORT CUT」の矢印のあたりや長押しは、関係ない前回のクエスト（禁忌の獄など）へ飛ぶので使わない。間違って書庫以外に入ったら、左上の青い戻る矢印やホームボタンで戻る。書庫のクエストを1つ以上クリアした後は「クエスト」を約1秒長押しする（さっきの書庫クエストの詳細へ飛ぶので、左上の戻る矢印で書庫の一覧に戻る）。
 - クエスト一覧では「追憶の書庫」を押す。
 - 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
-- 書庫の一覧では、極 → 究極 → ★5制限 → 激究極 のグループの順に、一番上のクエストを選ぶ。見えなければ下へスクロールする。超絶など、それより難しいグループしか残っていなければ止める（stop）。
+- 書庫の一覧は上から難しい順（黎絶・轟絶・爆絶・超絶…）に並んでいて、極・究極などは一番下のほうにある。極 → 究極 → ★5制限 → 激究極 のグループの順に、そのグループの一番上のクエストを選ぶ。見えなければ下へスクロールする（swipe で y2 を y より小さく。スクロールはプログラムが一番下まで一気に行う）。一番下までスクロール済みで、超絶以上の難しいグループしか残っていないときだけ止める（stop）。
 - クエスト詳細では、一番上の難易度を押す。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上を押す。
 - デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間）を左右にスワイプして切り替える。合っていれば「出撃」。
@@ -1020,7 +1040,7 @@ def ask_claude_action(png, W, H, hist):
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            j = json.loads(r.read())
+            j = json.loads(r.read()); _count(j)
     except urllib.error.HTTPError as e:
         return None, f"AIエラー {e.code}: {e.read().decode(errors='ignore')[:80]}"
     txt = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
@@ -1050,7 +1070,7 @@ def ask_claude_battle(png, W, H, who):
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            j = json.loads(r.read())
+            j = json.loads(r.read()); _count(j)
         txt = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
         a = json.loads(re.search(r"\{.*\}", txt, re.S).group(0))
         return [float(v) for v in a["me"]], [float(v) for v in a["ally"]]
@@ -1062,7 +1082,7 @@ class ShukaAuto:
     """one worker per instance: look -> decide (learned or AI) -> act -> random wait. Stops on its own when unsure."""
     def __init__(self, sh, adbs):
         self.sh, self.adbs = sh, adbs
-        self.run = [False] * len(adbs)
+        self.run = [False] * len(adbs); sh.auto = self
         self.info = [{"msg": "停止中", "steps": 0, "clears": 0, "hist": [], "quest": ""} for _ in adbs]
         try: self.log = json.load(open(SHUKA_LOG, encoding="utf-8"))
         except Exception: self.log = []
@@ -1114,24 +1134,50 @@ class ShukaAuto:
                 same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
                 if same >= 15:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
+                if inf.get("_scroll"):
+                    inf["_scroll"] = None
                 # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
-                L = min((L for L in self.sh.learn if L.get("act")), key=lambda L: sig_dist(sig, L["sig"]), default=None)
+                ctx = "after" if inf["clears"] else "first"
+                L = min((L for L in self.sh.learn if L.get("act") and L["act"].get("ctx", ctx) == ctx), key=lambda L: sig_dist(sig, L["sig"]), default=None)
                 if L and sig_dist(sig, L["sig"]) < .05 and same < 2:
                     a = dict(L["act"]); a.setdefault("state", L.get("state")); a.setdefault("why", L.get("note", "")); how = "覚えた操作"; kk = 2
                 else:
                     if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
                         with self.sh.lock: L.pop("act", None); self.sh.save()
-                    hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+                    hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else []) \
+                        + (["※ 書庫の一覧は一番下までスクロール済み（これ以上下はない）"] if inf.get("bottom") else [])
                     a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
                     with self.sh.lock: self.sh.ai_calls += 1
                     if not a:
                         inf["msg"] = "AI：" + err; time.sleep(8); continue
                     how = "AI"; kk = 2
-                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("home", "shuka_list", "quest_detail", "deck_select", "filter", "quest_list", "battle", "other"):
-                        with self.sh.lock:      # always the same tap on this screen: remember it
+                    # remember it when this screen always gets the same press. Screens whose press depends on the quest
+                    # (which quest in the list, the deck, the filter steps) are always judged fresh. Home is remembered twice:
+                    # once for the first visit (tap) and once for after a clear (long press).
+                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "deck_select", "filter", "battle", "other", "loading"):
+                        with self.sh.lock:
                             self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
-                            self.sh.learn[-1]["act"] = {x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}; self.sh.save()
+                            self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, ctx=ctx); self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
+                if st != "shuka_list":
+                    inf["bottom"] = False
+                elif a["action"] == "stop" and not inf.get("bottom"):     # never give up on the list before having seen its bottom
+                    a = {"action": "swipe", "state": st, "y": 1, "y2": 0}; why = "まだ一番下を見ていないのでスクロール"
+                if st == "shuka_list" and a["action"] == "swipe" and float(a.get("y2", 0) or 0) <= float(a.get("y", 1) or 1):
+                    # scrolling down the list: done here with long drags until it stops moving (no AI per drag)
+                    inf["msg"] = "書庫の一覧を下までスクロール中"; print(f"書庫自動 {A.serial}: {inf['msg']}")
+                    time.sleep(random.uniform(.6, 1.5))
+                    for _ in range(10):
+                        before = list_sig(*A.raw_frame())
+                        x0 = w * random.uniform(.42, .6)
+                        A.run("shell", "input", "swipe", *map(str, (round(x0), round(h * random.uniform(.80, .86)), round(x0 + random.uniform(-25, 25)),
+                              round(h * random.uniform(.26, .32)), round(random.uniform(420, 650)))), timeout=15)
+                        time.sleep(random.uniform(1.0, 1.8))
+                        if sig_dist(list_sig(*A.raw_frame()), before) < .015:
+                            break
+                    inf["bottom"] = True; inf["steps"] += 1
+                    inf["hist"] = (inf["hist"] + ["書庫の一覧を一番下までスクロールした"])[-14:]
+                    continue
                 if a.get("quest") and st in ("quest_detail", "helper_select", "deck_select", "loading"): inf["quest"] = str(a["quest"])[:40]
                 inf["msg"] = f"{st}：{a['action']}（{how}）{why}"
                 print(f"書庫自動 {A.serial}: {inf['msg']}")
@@ -1171,7 +1217,7 @@ let S=null;const $=id=>document.getElementById(id);
 async function post(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
 async function tick(){try{S=await (await fetch('/shuka/state')).json();render();}catch(e){$('info').textContent='ヘルパーにつながりません';}}
 function render(){$('run').textContent=S.on?'判定を止める':'判定を始める';$('run').classList.toggle('on',S.on);
-$('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}（約${(S.ai_calls*0.02).toFixed(2)}円）`;
+$('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}（実際の料金 約${S.yen.toFixed(2)}円）`;
 if(S.key)$('keybox').textContent='APIキー：設定済み';
 else if(!$('k')){$('keybox').innerHTML='APIキー未設定 <input id="k" type="password" placeholder="sk-ant-..." style="width:180px"> <button id="ks">保存</button>';
 $('ks').onclick=async()=>{const r=await post('/shuka/key',{key:$('k').value.trim()});if(!r.ok)alert(r.error);else{$('keybox').textContent='APIキー：設定済み';tick();}};}
