@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 61
+HELPER_VER = 62
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1110,7 +1110,7 @@ class ShukaAuto:
                     inf["msg"] = "バトル：待ち"; time.sleep(random.uniform(1.5, 2.5)); continue
                 sig = screen_sig(data, off, w, h)
                 if sum(_gray_grid(data, off, w, h, 0, 1, 6, 10)) / 60 < 18:
-                    inf["msg"] = "読み込み中"; time.sleep(random.uniform(2, 4)); continue
+                    inf["msg"] = "読み込み中"; time.sleep(random.uniform(1, 2)); continue
                 same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
                 if same >= 15:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
@@ -1138,8 +1138,9 @@ class ShukaAuto:
                 if a["action"] == "stop":
                     self.run[i] = False; inf["msg"] = "止めました：" + (why or st); continue
                 if a["action"] == "wait":
-                    time.sleep(random.uniform(2, 5)); continue
-                time.sleep(random.uniform(2, 15))                       # human-like pause before acting
+                    time.sleep(random.uniform(1, 2.5)); continue
+                # human-like pause before acting: usually short, sometimes a longer look (the AI already took a few seconds)
+                time.sleep(random.uniform(.6, 2.5) if how == "AI" else (random.uniform(4, 9) if random.random() < .12 else random.uniform(1, 3.5)))
                 self.act(A, a, kk, random.random())
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
                 if st == "result" and not inf.get("_res"):
@@ -1148,7 +1149,7 @@ class ShukaAuto:
                     try: json.dump(self.log, open(SHUKA_LOG, "w", encoding="utf-8"), ensure_ascii=False)
                     except Exception: pass
                 inf["_res"] = st == "result"
-                time.sleep(random.uniform(1.5, 3))
+                time.sleep(random.uniform(.8, 1.6))
             except Exception as e:
                 inf["msg"] = "エラー：" + str(e)[:80]; time.sleep(5)
 
