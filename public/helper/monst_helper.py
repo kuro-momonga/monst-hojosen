@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 74
+HELPER_VER = 75
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -833,6 +833,11 @@ def is_shuka_list(data, off, w, h):
     return best > .8
 
 
+def full_sig(data, off, w, h):
+    """coarse look of the whole middle of the screen (tells apart screens that share the title band and menu)"""
+    return _gray_grid(data, off, w, h, .2, .9, 8, 14)
+
+
 def list_sig(data, off, w, h):
     """the middle of the screen (the scrolling list), to see whether a scroll moved anything"""
     return _gray_grid(data, off, w, h, .3, .9, 12, 16)
@@ -1111,7 +1116,7 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - クエスト一覧では「追憶の書庫」を押す。
 - 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
 - 書庫の一覧：どのクエストを押すかはプログラムが決めるので、state は shuka_list、action は wait と答えればよい（絞り込みが「報酬未受取」になっていないときだけ、右上の「表示順変更」を押す）。
-- クエスト詳細では、一番上の難易度を押す。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
+- クエスト詳細では、一番上の難易度の帯（「極」「究極」などの文字のあたり、帯の左〜中央）を押す。右端の「詳細」ボタンは押さない（ステージ詳細が開くだけ）。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
 - プレイタイプ選択（ソロ／マルチ募集）では青い「ソロ」を押す（fixed は true）。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上を押す。
 - デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間、デッキ名やキャラのあたり）を横にスワイプして切り替える（★5制限は書庫周回の右隣）。合っていれば「出撃」を tap。
@@ -1600,7 +1605,7 @@ class ShukaAuto:
                         time.sleep(random.uniform(1, 1.8)); continue
                 # the 書庫 list (known look): pick the quest in code, no AI
                 SL = min((L for L in self.sh.learn if L.get("state") == "shuka_list"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if SL and sig_dist(sig, SL["sig"]) < .06 and is_shuka_list(data, off, w, h) and same < 3 and not inf.get("_pickfail"):
+                if is_shuka_list(data, off, w, h) and same < 3 and not inf.get("_pickfail"):
                     if self.pick_quest(A, i, inf): continue
                     inf["_pickfail"] = True
                 Gp = (inf.get("pick") or {}).get("group")
@@ -1610,8 +1615,14 @@ class ShukaAuto:
                     if self.deck(A, i, inf, want): continue
                 # a learned fixed action for this look -> do it (no AI). If it did not move the screen, the AI takes over.
                 ctx = "after" if inf["clears"] else "first"
-                L = min((L for L in self.sh.learn if L.get("act") and (L.get("state") != "home" or L["act"].get("ctx", ctx) == ctx)), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if L and sig_dist(sig, L["sig"]) < .05 and same < 2:
+                fs = full_sig(data, off, w, h)
+                # screens under the 書庫 title band all share the title and menu: there the middle must match too
+                shared = bool(SL and sig_dist(sig, SL["sig"]) < .06)
+                L = min((L for L in self.sh.learn if L.get("act") and (L.get("state") != "home" or L["act"].get("ctx", ctx) == ctx)
+                         and sig_dist(sig, L["sig"]) < .05 and (not shared or L["act"].get("full"))),
+                        key=lambda L: sig_dist(fs, L["act"]["full"]) if shared else sig_dist(sig, L["sig"]), default=None)
+                if L and shared and sig_dist(fs, L["act"]["full"]) > .09: L = None
+                if L and not is_shuka_list(data, off, w, h) and same < 2:
                     a = dict(L["act"]); a.setdefault("state", L.get("state")); a.setdefault("why", L.get("note", "")); how = "覚えた操作"; kk = 2
                 else:
                     if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
@@ -1631,7 +1642,7 @@ class ShukaAuto:
                     if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "deck_select", "filter", "battle", "other", "loading"):
                         with self.sh.lock:
                             self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
-                            self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, **({"ctx": ctx} if a.get("state") == "home" else {})); self.sh.save()
+                            self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, full=[round(v, 1) for v in full_sig(data, off, w, h)], **({"ctx": ctx} if a.get("state") == "home" else {})); self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
                 if st == "battle": inf["battle_t"] = time.time()
                 if st != "shuka_list":
