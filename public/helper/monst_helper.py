@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 71
+HELPER_VER = 72
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -389,7 +389,7 @@ class Adb:
         except subprocess.TimeoutExpired:
             p.kill()
         err = (p.stderr.read() or b"").decode(errors="ignore").strip()
-        print("dd:", err.replace("\n", " | ")[:200])
+        if err: print("dd:", err.replace("\n", " | ")[:200])
         # the stream process is gone now, so nothing can overtake this: make sure the finger is lifted
         # at the exact aim point (the tail of the stream can get stuck in buffers and never arrive)
         ev = lambda a, b, c: f"sendevent {d} {a} {b} {c}"
@@ -819,6 +819,18 @@ def _gray_grid(data, off, w, h, y0f, y1f, gw, gh):
 def screen_sig(data, off, w, h):
     """what identifies a screen: the title row under the profile bar + the bottom menu (24x6 + 24x3 grey cells)"""
     return _gray_grid(data, off, w, h, .12, .24, 24, 6) + _gray_grid(data, off, w, h, .92, 1.0, 24, 3)
+
+
+def is_shuka_list(data, off, w, h):
+    """the 書庫 list itself (not the quest page under the same title): the light 「モンスター名で検索」 bar is there"""
+    best = 0
+    for yf in (.365, .375, .385, .395, .405):
+        o = off + int(h * yf) * w * 4; n = t = 0
+        for x in range(int(w * .1), int(w * .7), 8):
+            i = o + x * 4; t += 1
+            if min(data[i], data[i + 1], data[i + 2]) > 195: n += 1
+        best = max(best, n / t)
+    return best > .8
 
 
 def list_sig(data, off, w, h):
@@ -1538,6 +1550,7 @@ class ShukaAuto:
                 data, off, w, h = A.raw_frame()
                 k = turn_from_rgba(data, off, w, h)
                 if k:   # our turn in a battle
+                    inf["battle_t"] = time.time()
                     inf["msg"] = f"バトル：{ORD.get(k)} の番"
                     time.sleep(random.uniform(.5, 3))
                     # no AI: read the 1st..4th labels, aim at the nearest other ball (friendship does the rest)
@@ -1556,6 +1569,7 @@ class ShukaAuto:
                     inf["hist"] = (inf["hist"] + [f"バトルで打った"])[-14:]
                     time.sleep(random.uniform(6, 9)); continue
                 if self.sh._panel(data, off, w, h):          # battle, not our turn
+                    inf["battle_t"] = time.time()
                     inf["msg"] = "バトル：待ち"; time.sleep(random.uniform(1.5, 2.5)); continue
                 sig = screen_sig(data, off, w, h)
                 if sum(_gray_grid(data, off, w, h, 0, 1, 6, 10)) / 60 < 18:
@@ -1565,7 +1579,7 @@ class ShukaAuto:
                     self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
                 # the 書庫 list (known look): pick the quest in code, no AI
                 SL = min((L for L in self.sh.learn if L.get("state") == "shuka_list"), key=lambda L: sig_dist(sig, L["sig"]), default=None)
-                if SL and sig_dist(sig, SL["sig"]) < .06 and same < 3 and not inf.get("_pickfail"):
+                if SL and sig_dist(sig, SL["sig"]) < .06 and is_shuka_list(data, off, w, h) and same < 3 and not inf.get("_pickfail"):
                     if self.pick_quest(A, i, inf): continue
                     inf["_pickfail"] = True
                 Gp = (inf.get("pick") or {}).get("group")
@@ -1581,6 +1595,8 @@ class ShukaAuto:
                 else:
                     if L and sig_dist(sig, L["sig"]) < .05 and same >= 3:      # the learned action keeps failing here: forget it
                         with self.sh.lock: L.pop("act", None); self.sh.save()
+                    if time.time() - inf.get("battle_t", 0) < 20:     # mid-battle effects / enemy turn / stage change: just wait, no AI
+                        inf["msg"] = "バトル：演出中"; time.sleep(random.uniform(1.2, 2)); continue
                     hist = [f"この周回で書庫のクエストをクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
 
                     a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
@@ -1596,9 +1612,10 @@ class ShukaAuto:
                             self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
                             self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, ctx=ctx); self.sh.save()
                 st = a.get("state", "?"); why = a.get("why", "")
+                if st == "battle": inf["battle_t"] = time.time()
                 if st != "shuka_list":
                     inf["_pickfail"] = False
-                elif how == "AI" and not inf.get("_pickfail") and not (a["action"] == "tap" and float(a.get("y", 0) or 0) * kk < h * .3):
+                elif how == "AI" and is_shuka_list(data, off, w, h) and not inf.get("_pickfail") and not (a["action"] == "tap" and float(a.get("y", 0) or 0) * kk < h * .3):
                     # the AI says this is the list: remember the look, then pick in code (the AI only handles the filter button up top)
                     if not (SL and sig_dist(sig, SL["sig"]) < .06):
                         with self.sh.lock: self.sh.add("shuka_list", "書庫の一覧", sig, png_small(data, off, w, h, 6))
