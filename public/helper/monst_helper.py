@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 67
+HELPER_VER = 68
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -783,6 +783,7 @@ SHUKA_STATES = {
     "shuka_list": "追憶の書庫の一覧（左上に「追憶の書庫」、モンスターのアイコンの格子）",
     "filter": "書庫の絞り込み・並び替えの窓（「絞り込み」「決定」）",
     "quest_detail": "クエストの難易度を選ぶ画面（究極・極などの帯と「詳細」）",
+    "play_type": "プレイタイプ選択（青い「ソロ」とオレンジの「マルチ募集」の大きなボタン）",
     "helper_select": "助っ人選択",
     "deck_select": "デッキ選択（「出撃」ボタン）",
     "loading": "通信中・真っ黒・クエスト名だけの読み込み画面",
@@ -1077,6 +1078,7 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
 - 書庫の一覧：どのクエストを押すかはプログラムが決めるので、state は shuka_list、action は wait と答えればよい（絞り込みが「報酬未受取」になっていないときだけ、右上の「表示順変更」を押す）。
 - クエスト詳細では、一番上の難易度を押す。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
+- プレイタイプ選択（ソロ／マルチ募集）では青い「ソロ」を押す（fixed は true）。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上を押す。
 - デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間、デッキ名やキャラのあたり）を横にスワイプして切り替える（★5制限は書庫周回の右隣）。合っていれば「出撃」を tap。
 - 読み込み中・通信中・演出中は待つ（wait）。
@@ -1318,22 +1320,26 @@ class ShukaAuto:
         x = round(sum(xs) / len(xs)); y = (r[0] + r[1]) / 2
         return x, y, h * .232 + ln / 2, h * .868 - ln / 2
 
-    def drag_to(self, A, ty):
+    def drag_to(self, A, ty, quick=False):
         t = self.thumb(A)
         if not t: return False
         x, y, _, _ = t
-        A.run("shell", "input", "swipe", *map(str, (x, round(y), x + random.randint(-2, 2), round(ty), round(random.uniform(600, 900)))), timeout=15)
-        time.sleep(random.uniform(.9, 1.4)); return True
+        d = random.uniform(220, 420) if quick or abs(ty - y) > 200 else random.uniform(300, 650)
+        A.run("shell", "input", "swipe", *map(str, (x + random.randint(-2, 2), round(y), x + random.randint(-3, 3), round(ty), round(d))), timeout=15)
+        time.sleep(random.uniform(.45, .9)); return True
 
     def head(self, A):
-        """the group heading now on top of the list: learned look, else ask the AI once and remember"""
+        """the group heading now on top of the list"""
         data, off, w, h = A.raw_frame()
-        bits = head_bits(data, off, w, h)
+        return self.name_of(head_bits(data, off, w, h), lambda: png_crop(data, off, w, h, *HEAD_BOX))
+
+    def name_of(self, bits, crop):
+        """heading bits -> group name: learned look, else ask the AI once (only the small heading crop) and remember"""
         if sum(bits) < .2: return None
         best = min(self.groups, key=lambda G: bits_dist(bits, G["bits"]), default=None)
         if best and bits_dist(bits, best["bits"]) < .035:
             return best["name"]
-        name = ask_claude_head(png_crop(data, off, w, h, *HEAD_BOX))
+        name = ask_claude_head(crop())
         with self.sh.lock: self.sh.ai_calls += 1
         if not name or "none" in name.lower(): return None
         name = norm_group(name)
@@ -1343,17 +1349,32 @@ class ShukaAuto:
         return name
 
     def survey(self, A):
-        """drag the scrollbar from top to bottom in small steps; note where each group heading first shows up"""
+        """one long drag of the scrollbar knob top -> bottom (2-3 s) while grabbing frames; the heading in each frame
+        tells where each group starts. Returns [(knob y, group)] in list order."""
+        import threading
         t = self.thumb(A)
         if not t: return []
-        _, _, top, bot = t
-        self.drag_to(A, top)
-        found = []; n = 28
-        for s in range(n + 1):
-            ty = top + (bot - top) * s / n
-            if s: self.drag_to(A, ty)
-            g = self.head(A)
-            if g and (not found or found[-1][1] != g): found.append((ty, g))
+        x, y, top, bot = t
+        if y - top > 15:
+            self.drag_to(A, top, quick=True)
+        dur = random.uniform(2.2, 3.2); lag = .12
+        th = threading.Thread(target=lambda: A.run("shell", "input", "swipe", *map(str, (x + random.randint(-2, 2), round(top), x + random.randint(-3, 3), round(bot), round(dur * 1000))), timeout=20), daemon=True)
+        t0 = time.time(); th.start(); snaps = []
+        x0, y0, x1, y1 = HEAD_BOX
+        while time.time() - t0 < dur + .6:
+            tt = time.time() - t0
+            data, off, w, h = A.raw_frame()
+            ya, yb = int(h * y0), int(h * y1)
+            snaps.append((tt, head_bits(data, off, w, h), bytes(data[off + ya * w * 4: off + yb * w * 4]), w, h, ya))
+        th.join(5)
+        found = []
+        for tt, bits, rows, w, h, ya in snaps:
+            crop = lambda rows=rows, w=w, h=h, ya=ya: png_crop(b"\0" * (ya * w * 4) + rows + b"\0" * ((h - ya) * w * 4 - len(rows)), 0, w, h, *HEAD_BOX)
+            g = self.name_of(bits, crop)
+            if not g: continue
+            ty = top + (bot - top) * max(0, min(1, (tt - lag) / dur))
+            if not found or found[-1][1] != g: found.append((ty, g))
+        self.span = (top, bot)
         return found
 
     def find_heading(self, A, name):
@@ -1390,13 +1411,16 @@ class ShukaAuto:
             if not G:
                 self.run[i] = False; inf["msg"] = "止めました：残りは " + "・".join(dict.fromkeys(groups)) + "（超絶以上かマルチ専用）"
                 print(f"書庫自動 {A.serial}: {inf['msg']}"); return True
-            idx = groups.index(G); ty = found[max(0, idx - 1)][0]
+            idx = groups.index(G); ty = found[idx][0] - (self.span[1] - self.span[0]) * random.uniform(.015, .03)
             self.drag_to(A, ty); y = self.find_heading(A, G)
-            step = (found[-1][0] - found[0][0]) / 28 if len(found) > 1 else 20
-            for d in (.5, 1, -.5, 1.5):
+            small = (self.span[1] - self.span[0]) * .015
+            for _ in range(8):           # nudge with the heading on top as a guide
                 if y is not None: break
-                self.drag_to(A, ty + d * step); y = self.find_heading(A, G)
-                if y is not None: ty += d * step
+                cur = self.head(A)
+                if cur == G: ty -= small               # its own heading has scrolled up out of the list
+                elif cur in groups and groups.index(cur) < idx: ty += small
+                else: ty -= small
+                self.drag_to(A, ty); y = self.find_heading(A, G)
         if y is None:
             return False
         n = inf.setdefault("skip", {}).get(G, 0); col, row = n % 5, n // 5
