@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 68
+HELPER_VER = 69
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1086,7 +1086,8 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - 確認ウィンドウはOKを押す（購入・オーブ消費・コンティニューは押さない）。
 - 負けた画面では「あきらめる」を押す。
 - 書庫ポイントが足りない・なくなったという表示が出たら stop（why に「書庫ポイント切れ」）。
-- 分からない・危ない画面では stop。
+- 上に書いていない画面でも、ソロで書庫のクエストを先に進める操作がはっきりしていれば（ソロ、OK、次へ など）それを選ぶ。戻るのは、書庫と関係ない場所に来てしまったときだけ。
+- お金・オーブを使う画面や、どうしても分からない画面では stop。
 """
 SHUKA_ACT_FMT = """次の操作を1つ決めて、JSONだけで答えてください（説明文は不要）。座標はこの画像のピクセル（左上が0,0、幅{W}、高さ{H}）。
 {{"state":"<画面の名前: {states}>","action":"tap|longpress|swipe|wait|back|stop","x":0,"y":0,"x2":0,"y2":0,"why":"20文字以内","fixed":true,"quest":""}}
