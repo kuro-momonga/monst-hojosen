@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 76
+HELPER_VER = 77
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1851,10 +1851,16 @@ class ShukaAuto:
                     inf["after_lp"] = False; pause(.6, 1.8); tap_back(A, w, h)
                     inf["msg"] = "長押しで来たクエストのページ：戻る"
                 elif inf.get("from_list") and has_clear_tag(data, off, w, h):
-                    # a quest whose reward is already taken was in the list: the 報酬未受取 filter is off
-                    inf["from_list"] = False; inf["need_filter"] = True; pause(.6, 1.6); tap_back(A, w, h)
-                    inf["msg"] = "CLEAR済みのクエスト：戻って絞り込みを直す"
-                    inf["hist"] = (inf["hist"] + ["一覧にCLEAR済みが出ていた。絞り込みが必要：表示順変更→初クリア報酬を「報酬未受取」→決定"])[-14:]
+                    # a quest whose reward is already taken was in the list: the 報酬未受取 filter is off.
+                    # The first time: back and fix the filter. If it happens again anyway: just skip that quest.
+                    inf["from_list"] = False; pause(.6, 1.6); tap_back(A, w, h)
+                    inf["clear_seen"] = inf.get("clear_seen", 0) + 1
+                    if inf["clear_seen"] == 1:
+                        inf["need_filter"] = True; inf["msg"] = "CLEAR済みのクエスト：戻って絞り込みを直す"
+                        inf["hist"] = (inf["hist"] + ["一覧にCLEAR済みが出ていた。絞り込みが必要：表示順変更→初クリア報酬を「報酬未受取」→決定"])[-14:]
+                    else:
+                        if G: inf.setdefault("skip", {})[G] = inf["skip"].get(G, 0) + 1
+                        inf["msg"] = "CLEAR済みのクエスト：戻って隣のクエストにする"
                 else:                            # the top band is the hardest difficulty: play that one
                     inf["from_list"] = False; inf["played"] = True
                     pause(.6, 1.8)
