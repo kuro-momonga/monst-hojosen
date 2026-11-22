@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 49
+HELPER_VER = 50
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -616,6 +616,7 @@ ORD = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
 def make_handler(adbs):
     adb = adbs[0]
     W = Watcher(adbs)
+    SH = Shuka(adbs)
     class H(BaseHTTPRequestHandler):
         def cors(self):
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -647,6 +648,14 @@ def make_handler(adbs):
                         try: A.connect(); A.touch(); others.append(A.serial)
                         except Exception: pass
                     return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch(), "rot": adb.rot, "natural": adb.natural, "sync": others})
+                if self.path.rstrip("/") == "/shuka":
+                    return self.reply(200, SHUKA_PAGE.encode(), "text/html; charset=utf-8")
+                if self.path.startswith("/shuka/state"):
+                    return self.reply(200, SH.status())
+                if self.path.startswith("/shuka/thumb"):
+                    from urllib.parse import urlparse, parse_qs
+                    i = int((parse_qs(urlparse(self.path).query).get("i") or ["0"])[0])
+                    return self.reply(200, SH.inst[i]["png"] or png_small(b"\0" * 64, 0, 4, 4, 1), "image/png")
                 if self.path.startswith("/watch"):
                     from urllib.parse import urlparse, parse_qs
                     qs = parse_qs(urlparse(self.path).query)
@@ -703,6 +712,17 @@ def make_handler(adbs):
                         raise RuntimeError(r0["error"])
                     errs = [r["error"] for r in res[1:] if r and "error" in r]
                     return self.reply(200, {"ok": True, **r0, "synced": len(adbs) - len(errs), "notes": r0.get("notes", []) + errs})
+                if self.path.startswith("/shuka/run"):
+                    SH.on = bool(q.get("on")); print("書庫: 画面の判定を" + ("始めました" if SH.on else "止めました"))
+                    return self.reply(200, SH.status())
+                if self.path.startswith("/shuka/fix"):
+                    return self.reply(200, {"ok": SH.fix(int(q["i"]), q["state"])})
+                if self.path.startswith("/shuka/key"):
+                    k = str(q.get("key", "")).strip()
+                    if not k.startswith("sk-ant-"):
+                        return self.reply(400, {"ok": False, "error": "sk-ant- で始まるキーを入れてください"})
+                    with open(KEY_FILE, "w") as f: f.write(k)
+                    return self.reply(200, {"ok": True})
                 if self.path.startswith("/update"):   # the tool asks: get the newest helper and restart
                     import threading
                     def go():
@@ -742,6 +762,198 @@ UPDATE_URL = "https://square-brook-4757.naraonara123.workers.dev/helper/monst_he
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESTART_FLAG = os.path.join(HERE, "restart.flag")
 
+# ======================= 書庫周回（段階1：画面の判定だけ。まだ何も押さない） =======================
+SHUKA_STATES = {
+    "home": "ホーム（真ん中に大きな「クエスト」ボタン）",
+    "quest_list": "クエスト一覧（すべて／おすすめ…のタブ、クエストのアイコンが並ぶ）",
+    "shuka_list": "追憶の書庫の一覧（左上に「追憶の書庫」、モンスターのアイコンの格子）",
+    "filter": "書庫の絞り込み・並び替えの窓（「絞り込み」「決定」）",
+    "quest_detail": "クエストの難易度を選ぶ画面（究極・極などの帯と「詳細」）",
+    "helper_select": "助っ人選択",
+    "deck_select": "デッキ選択（「出撃」ボタン）",
+    "loading": "通信中・真っ黒・クエスト名だけの読み込み画面",
+    "battle": "バトル中",
+    "result": "リザルト（スペシャル報酬、クリアタイム、OK など）",
+    "lose": "負け・コンティニューの画面",
+    "dialog": "その他の確認ウィンドウ・お知らせ",
+    "other": "上のどれでもない画面",
+}
+SHUKA_FILE = os.path.join(HERE, "shuka_learn.json") if "HERE" in globals() else "shuka_learn.json"
+KEY_FILE = None   # set in main()
+
+
+def _gray_grid(data, off, w, h, y0f, y1f, gw, gh):
+    out = []
+    for gy in range(gh):
+        ya = int(h * (y0f + (y1f - y0f) * gy / gh)); yb = int(h * (y0f + (y1f - y0f) * (gy + 1) / gh))
+        for gx in range(gw):
+            xa = int(w * gx / gw); xb = int(w * (gx + 1) / gw)
+            s = n = 0
+            for y in range(ya, max(ya + 1, yb), max(1, (yb - ya) // 4)):
+                o = off + (y * w) * 4
+                for x in range(xa, max(xa + 1, xb), max(1, (xb - xa) // 4)):
+                    i = o + x * 4
+                    s += data[i] * 30 + data[i + 1] * 59 + data[i + 2] * 11; n += 1
+            out.append(s / n / 100)
+    return out
+
+
+def screen_sig(data, off, w, h):
+    """what identifies a screen: the title row under the profile bar + the bottom menu (24x6 + 24x3 grey cells)"""
+    return _gray_grid(data, off, w, h, .12, .24, 24, 6) + _gray_grid(data, off, w, h, .92, 1.0, 24, 3)
+
+
+def sig_dist(a, b):
+    return sum(abs(x - y) for x, y in zip(a, b)) / len(a) / 255
+
+
+def png_small(data, off, w, h, step=4):
+    """the frame as a small PNG (no PIL needed)"""
+    import zlib
+    W, H = w // step, h // step
+    raw = bytearray()
+    for y in range(H):
+        raw.append(0); o = off + (y * step * w) * 4
+        for x in range(W):
+            i = o + x * step * 4; raw += data[i:i + 3]
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b"")
+
+
+def ask_claude_state(png):
+    """unknown screen -> ask Claude (Haiku) which screen it is. Returns (state, note)"""
+    import base64, urllib.request
+    key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
+    if not key:
+        return None, "APIキーが未設定"
+    states = "\n".join(f"- {k}: {v}" for k, v in SHUKA_STATES.items())
+    body = {"model": "claude-haiku-5-5", "max_tokens": 150, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": "これはスマホゲーム「モンスターストライク」の画面です。次のどれに当たるか、JSONだけで答えてください。"
+                                 '形式: {"state": "<名前>", "note": "<20文字以内で画面の説明>"}\n' + states}]}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        j = json.loads(r.read())
+    txt = "".join(c.get("text", "") for c in j.get("content", []))
+    import re
+    m = re.search(r"\{.*\}", txt, re.S)
+    ans = json.loads(m.group(0)) if m else {}
+    st = ans.get("state") if ans.get("state") in SHUKA_STATES else "other"
+    return st, str(ans.get("note", ""))[:40]
+
+
+class Shuka:
+    """polls every instance, tells which screen it is on: known look -> instantly, new look -> asks Claude once and remembers it"""
+    def __init__(self, adbs):
+        import threading
+        self.adbs, self.on, self.lock = adbs, False, threading.Lock()
+        try: self.learn = json.load(open(SHUKA_FILE, encoding="utf-8"))
+        except Exception: self.learn = []          # [{state, note, sig, n}]
+        self.inst = [{"serial": A.serial, "state": "-", "note": "", "how": "", "png": b"", "sig": None, "t": 0} for A in adbs]
+        self.ai_calls = 0
+        for i, A in enumerate(adbs):
+            threading.Thread(target=self.loop, args=(i, A), daemon=True).start()
+
+    def save(self):
+        try:
+            with open(SHUKA_FILE, "w", encoding="utf-8") as f: json.dump(self.learn, f, ensure_ascii=False)
+        except Exception as e: print("書庫: 保存できません", e)
+
+    def classify(self, data, off, w, h):
+        if turn_from_rgba(data, off, w, h) or self._panel(data, off, w, h):
+            return "battle", "パーティ欄あり", "見た目", None
+        avg = sum(_gray_grid(data, off, w, h, 0, 1, 6, 10)) / 60
+        if avg < 18:
+            return "loading", "真っ暗", "見た目", None
+        sig = screen_sig(data, off, w, h)
+        best = min(self.learn, key=lambda L: sig_dist(sig, L["sig"]), default=None)
+        if best and sig_dist(sig, best["sig"]) < .06:
+            best["n"] = best.get("n", 0) + 1
+            return best["state"], best.get("note", ""), "見本", sig
+        return None, "", "", sig
+
+    def _panel(self, data, off, w, h):
+        y = int(h * .8); o = off + y * w * 4; n = t = 0
+        for x in range(0, w, 6):
+            i = o + x * 4; t += 1
+            if data[i] > 200 and 140 < data[i + 1] < 220 and data[i + 2] < 80: n += 1
+        return n > t * .5
+
+    def loop(self, i, A):
+        st = self.inst[i]; prev_sig = None
+        while True:
+            time.sleep(random.uniform(2.5, 4.0))
+            if not self.on:
+                continue
+            try:
+                if not A.size: A.connect()
+                data, off, w, h = A.raw_frame()
+                state, note, how, sig = self.classify(data, off, w, h)
+                st["png"] = png_small(data, off, w, h); st["t"] = time.time(); st["sig"] = sig
+                if state is None:
+                    if prev_sig is None or sig_dist(sig, prev_sig) > .03:      # wait until the screen holds still
+                        prev_sig = sig; st.update(state="?", note="判定中（画面が落ち着くのを待っています）", how=""); continue
+                    with self.lock:
+                        self.ai_calls += 1
+                    state, note = ask_claude_state(png_small(data, off, w, h, 2))
+                    if state is None:
+                        st.update(state="?", note=note, how=""); continue
+                    with self.lock:
+                        self.learn.append({"state": state, "note": note, "sig": [round(v, 1) for v in sig], "n": 1}); self.save()
+                    how = "AI（覚えました）"
+                    print(f"書庫 {A.serial}: 新しい画面 → {state}（{note}）")
+                prev_sig = sig
+                st.update(state=state, note=note, how=how)
+            except Exception as e:
+                st.update(state="×", note=str(e)[:80], how="")
+
+    def fix(self, i, state):
+        """the user corrects the last screen of instance i"""
+        sig = self.inst[i].get("sig")
+        if not sig or state not in SHUKA_STATES: return False
+        with self.lock:
+            for L in self.learn:
+                if sig_dist(sig, L["sig"]) < .06: L["state"] = state; L["note"] = "手で直した"
+            if not any(sig_dist(sig, L["sig"]) < .06 for L in self.learn):
+                self.learn.append({"state": state, "note": "手で直した", "sig": [round(v, 1) for v in sig], "n": 1})
+            self.save()
+        self.inst[i].update(state=state, note="手で直した", how="見本")
+        return True
+
+    def status(self):
+        return {"on": self.on, "ai_calls": self.ai_calls, "learned": len(self.learn), "key": bool(KEY_FILE and os.path.exists(KEY_FILE)),
+                "states": SHUKA_STATES, "inst": [{k: v for k, v in s.items() if k in ("serial", "state", "note", "how", "t")} for s in self.inst]}
+
+
+SHUKA_PAGE = """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>書庫周回（画面の判定）</title><style>
+body{margin:0;background:#0f1115;color:#e8eaef;font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
+header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #2a2f3a}
+h1{font-size:17px;margin:0}button,select,input{font:inherit;font-size:14px;border-radius:8px;border:1px solid #2a2f3a;background:#1c2029;color:#e8eaef;padding:8px 12px}
+button.on{background:#1f5a3a;border-color:#3ddc84}.small{font-size:12px;color:#8b93a3}
+main{display:flex;gap:16px;flex-wrap:wrap;padding:16px}.c{background:#171a21;border:1px solid #2a2f3a;border-radius:12px;padding:12px;width:300px;display:flex;flex-direction:column;gap:8px}
+.c img{width:100%;border-radius:8px;background:#000;min-height:200px}.st{font-size:22px;font-weight:800;color:#ffcf3f}
+</style></head><body><header><h1>書庫周回：画面の判定（まだ何も押しません）</h1>
+<button id="run">判定を始める</button><span id="info" class="small"></span><span style="flex:1"></span>
+<span id="keybox" class="small"></span></header><main id="m"></main><script>
+let S=null;const $=id=>document.getElementById(id);
+async function post(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
+async function tick(){try{S=await (await fetch('/shuka/state')).json();render();}catch(e){$('info').textContent='ヘルパーにつながりません';}}
+function render(){$('run').textContent=S.on?'判定を止める':'判定を始める';$('run').classList.toggle('on',S.on);
+$('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}（約${(S.ai_calls*0.03).toFixed(1)}円）`;
+$('keybox').innerHTML=S.key?'APIキー：設定済み':'APIキー未設定 <input id="k" type="password" placeholder="sk-ant-..." style="width:180px"> <button id="ks">保存</button>';
+if(!S.key)$('ks').onclick=async()=>{await post('/shuka/key',{key:$('k').value});tick();};
+const opts=Object.entries(S.states).map(([k,v])=>`<option value="${k}">${k}：${v}</option>`).join('');
+$('m').innerHTML=S.inst.map((s,i)=>`<div class="c"><div class="small">${i+1}画面目 ${s.serial}</div><div class="st">${s.state}</div>
+<div class="small">${s.note||''} ${s.how?'・'+s.how:''}</div><img src="/shuka/thumb?i=${i}&t=${s.t}" alt="">
+<div class="small">違っていたら直す：</div><select data-i="${i}"><option value="">選ぶ…</option>${opts}</select></div>`).join('');
+document.querySelectorAll('select[data-i]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/fix',{i:+x.dataset.i,state:x.value});tick();}});}
+$('run').onclick=async()=>{await post('/shuka/run',{on:!S.on});tick();};
+tick();setInterval(()=>{if(!document.querySelector('select:focus'))tick();},3000);
+</script></body></html>"""
+
+
 
 def self_update():
     """download the newest helper from the tool's site; replace this file if it is newer. True = updated (restart needed)"""
@@ -771,6 +983,8 @@ def restart_for_update():
 
 
 def main():
+    global KEY_FILE
+    KEY_FILE = os.path.join(HERE, "apikey.txt")
     if self_update():
         restart_for_update()
     ap = argparse.ArgumentParser()
@@ -807,6 +1021,7 @@ def main():
         except Exception as e:
             print(f"{A.serial} にまだ接続できていません: {e}\n（BlueStacks を起動して ADB をオンにしてください）")
     print(f"ヘルパー v{HELPER_VER} 起動中: http://127.0.0.1:{LISTEN}  （このウィンドウを閉じると止まります）")
+    print(f"書庫周回の画面判定: http://127.0.0.1:{LISTEN}/shuka をブラウザで開く")
     ThreadingHTTPServer(("127.0.0.1", LISTEN), make_handler(adbs)).serve_forever()
 
 
