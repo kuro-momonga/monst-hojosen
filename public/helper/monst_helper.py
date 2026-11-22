@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 51
+HELPER_VER = 52
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -894,9 +894,9 @@ class Shuka:
                 if state is None:
                     if prev_sig is None or sig_dist(sig, prev_sig) > .03:      # wait until the screen holds still
                         prev_sig = sig; st.update(state="?", note="判定中（画面が落ち着くのを待っています）", how=""); continue
-                    with self.lock:
-                        self.ai_calls += 1
                     state, note = ask_claude_state(png_small(data, off, w, h, 2))
+                    if state is not None:
+                        with self.lock: self.ai_calls += 1
                     if state is None:
                         st.update(state="?", note=note, how=""); continue
                     with self.lock:
@@ -942,8 +942,9 @@ async function post(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-
 async function tick(){try{S=await (await fetch('/shuka/state')).json();render();}catch(e){$('info').textContent='ヘルパーにつながりません';}}
 function render(){$('run').textContent=S.on?'判定を止める':'判定を始める';$('run').classList.toggle('on',S.on);
 $('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}（約${(S.ai_calls*0.03).toFixed(1)}円）`;
-$('keybox').innerHTML=S.key?'APIキー：設定済み':'APIキー未設定 <input id="k" type="password" placeholder="sk-ant-..." style="width:180px"> <button id="ks">保存</button>';
-if(!S.key)$('ks').onclick=async()=>{await post('/shuka/key',{key:$('k').value});tick();};
+if(S.key)$('keybox').textContent='APIキー：設定済み';
+else if(!$('k')){$('keybox').innerHTML='APIキー未設定 <input id="k" type="password" placeholder="sk-ant-..." style="width:180px"> <button id="ks">保存</button>';
+$('ks').onclick=async()=>{const r=await post('/shuka/key',{key:$('k').value.trim()});if(!r.ok)alert(r.error);else{$('keybox').textContent='APIキー：設定済み';tick();}};}
 const opts=Object.entries(S.states).map(([k,v])=>`<option value="${k}">${k}：${v}</option>`).join('');
 $('m').innerHTML=S.inst.map((s,i)=>`<div class="c"><div class="small">${i+1}画面目 ${s.serial}</div><div class="st">${s.state}</div>
 <div class="small">${s.note||''} ${s.how?'・'+s.how:''}</div><img src="/shuka/thumb?i=${i}&t=${s.t}" alt="">
