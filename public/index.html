@@ -291,7 +291,9 @@
 
 <script>
 (() => {
-  const VERSION = '3.22';
+  const VERSION = '3.23';
+  const HELPER_LATEST = 49;   // bump together with HELPER_VER in helper/monst_helper.py
+  let bsUpdating = false;
   // home-screen app: reload when a newer version is deployed
   async function checkUpdate() {
     try {
@@ -2099,7 +2101,17 @@
   }
   async function bsFire() {
     if (!img) { toast('先に画像を読み込んでください', 2000); return; }
-    if (bsInfo && !(bsInfo.ver >= 48)) toast('ヘルパーが古いです。monst_helper.py をダウンロードし直してください', 4000);
+    if (bsInfo && !(bsInfo.ver >= 49)) {
+      if (bsInfo.ver >= 49 - 1) {   // v48 can't update itself yet
+        toast('ヘルパーが古いです。今回だけ monst_helper.py と start_helper.bat をダウンロードし直してください（次からは自動で更新されます）', 6000);
+      }
+      else toast('ヘルパーが古いです。monst_helper.py と start_helper.bat をダウンロードし直してください', 5000);
+    }
+    else if (bsInfo && bsInfo.ver < HELPER_LATEST && !bsUpdating) {   // newer helper on the site: it updates and restarts itself
+      bsUpdating = true; toast('ヘルパーを自動で更新しています…（数秒）', 4000);
+      fetch(BS + '/update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {});
+      setTimeout(() => { bsUpdating = false; bsStatus(true); }, 7000);
+    }
     const ss = ssArm && FACES && turnK ? FACES.tap[turnK - 1] : null;
     const gt = gArm && FACES ? FACES.gtap : null;
     if ((ssArm && !ss) || (gArm && !gt)) { toast('顔の位置がわかりません。画面を取り込み直してください', 3000); return; }

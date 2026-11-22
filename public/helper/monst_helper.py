@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 48
+HELPER_VER = 49
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -703,6 +703,14 @@ def make_handler(adbs):
                         raise RuntimeError(r0["error"])
                     errs = [r["error"] for r in res[1:] if r and "error" in r]
                     return self.reply(200, {"ok": True, **r0, "synced": len(adbs) - len(errs), "notes": r0.get("notes", []) + errs})
+                if self.path.startswith("/update"):   # the tool asks: get the newest helper and restart
+                    import threading
+                    def go():
+                        if self_update():
+                            time.sleep(.5); restart_for_update()
+                    ok = True
+                    threading.Thread(target=go, daemon=True).start()
+                    return self.reply(200, {"ok": ok, "ver": HELPER_VER})
                 if self.path.startswith("/tap"):    # e.g. the guardian beast: the same tap on every instance
                     import threading
                     seed = random.random(); out = [None] * len(adbs); W.busy = time.time() + 5
@@ -730,7 +738,41 @@ def make_handler(adbs):
     return H
 
 
+UPDATE_URL = "https://square-brook-4757.naraonara123.workers.dev/helper/monst_helper.py"
+HERE = os.path.dirname(os.path.abspath(__file__))
+RESTART_FLAG = os.path.join(HERE, "restart.flag")
+
+
+def self_update():
+    """download the newest helper from the tool's site; replace this file if it is newer. True = updated (restart needed)"""
+    import re, urllib.request
+    try:
+        with urllib.request.urlopen(f"{UPDATE_URL}?t={int(time.time())}", timeout=8) as r:
+            code = r.read().decode("utf-8")
+        m = re.search(r"^HELPER_VER = (\d+)", code, re.M)
+        if not m or int(m.group(1)) <= HELPER_VER:
+            return False
+        compile(code, "monst_helper.py", "exec")          # never install something broken
+        me = os.path.abspath(__file__)
+        shutil.copyfile(me, me + ".bak")
+        with open(me, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(code)
+        print(f"ヘルパーを v{HELPER_VER} → v{m.group(1)} に更新しました。再起動します…")
+        return True
+    except Exception as e:
+        print(f"（更新の確認をスキップ: {e}）")
+        return False
+
+
+def restart_for_update():
+    try: open(RESTART_FLAG, "w").write("1")
+    except Exception: pass
+    sys.stdout.flush(); os._exit(3)    # start_helper.bat starts it again
+
+
 def main():
+    if self_update():
+        restart_for_update()
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default=None, help="BlueStacks の ADB ポート（複数の画面に同時に打つならカンマ区切り: 5575,5585,5595）")
     ap.add_argument("--adb", default=None, help="adb.exe の場所（省略すると自動で探す）")
@@ -739,6 +781,12 @@ def main():
     if not exe:
         print("adb が見つかりません。--adb で HD-Adb.exe の場所を指定してください"); sys.exit(1)
     port = a.port
+    restarted = os.path.exists(RESTART_FLAG)
+    if restarted:
+        try: os.remove(RESTART_FLAG)
+        except Exception: pass
+    if not port and restarted and os.path.exists(os.path.join(HERE, "ports.txt")):
+        port = open(os.path.join(HERE, "ports.txt")).read().strip()   # after an update: same screens, no question
     if not port:   # ask here (cmd.exe garbles long Japanese prompts in .bat files)
         last_f = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ports.txt")
         last = open(last_f).read().strip() if os.path.exists(last_f) else ""
