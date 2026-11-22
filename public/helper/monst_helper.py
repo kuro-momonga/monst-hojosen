@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 73
+HELPER_VER = 74
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1412,66 +1412,76 @@ class ShukaAuto:
         self.span = (top, bot)
         return found
 
-    def find_heading(self, A, name):
-        """y (pixels) of the heading row `name` inside the list, or None"""
-        refs = [G["bits"] for G in self.groups if G["name"] == name]
-        if not refs: return None
-        data, off, w, h = A.raw_frame()
+    def heading_in_list(self, data, off, w, h, name):
+        """y (pixels) of the heading row `name` scrolling inside the list (below the sticky one), or None.
+        The best match there must be this very name (究極 / 究極★5以下制限 look alike at the start)."""
+        if not any(G["name"] == name for G in self.groups): return None
         best = None
-        for yy in range(int(h * .40), int(h * .82), 8):
+        for yy in range(int(h * .47), int(h * .80), 6):
             b = head_bits(data, off, w, h, yy / h)
             if sum(b) < .2: continue
-            d = min(bits_dist(b, r) for r in refs)
-            if best is None or d < best[0]: best = (d, yy)
-        if best and best[0] < .06:
+            for G in self.groups:
+                d = bits_dist(b, G["bits"])
+                if best is None or d < best[0]: best = (d, yy, G["name"])
+        if best and best[0] < .05 and best[2] == name:
             return best[1]
         return None
 
+    def sticky(self, data, off, w, h):
+        """name of the heading stuck on top of the list (learned looks only)"""
+        bits = head_bits(data, off, w, h)
+        if sum(bits) < .2: return None
+        best = min(self.groups, key=lambda G: bits_dist(bits, G["bits"]), default=None)
+        return best["name"] if best and bits_dist(bits, best["bits"]) < .04 else None
+
+    def align(self, A, G, order, ty, span, row):
+        """move the knob until G's heading sits just under the sticky heading of the group before it
+        (the two headings stacked, like scrolling by hand), so its first quest is the top-left one in view"""
+        step = span * .02; last = 0
+        for _ in range(16):
+            self.drag_to(A, ty)
+            data, off, w, h = A.raw_frame()
+            y = self.heading_in_list(data, off, w, h, G)
+            lim = h * .84 - w * (.146 + .18 * row)
+            if y is not None and y <= min(lim, h * .62):
+                return ty, y
+            st = self.sticky(data, off, w, h)
+            past = st == G or (y is None and st in order and G in order and order.index(st) > order.index(G))
+            d = -1 if past else 1
+            if last and d != last: step = max(step / 2, 3)
+            last = d; ty += d * step
+        return ty, None
+
     def pick_quest(self, A, i, inf):
         """on the 書庫 list: go to the group to play and tap its first quest (no AI). Returns True when it tapped."""
-        data, off, w, h = A.raw_frame()
         pick = inf.get("pick") or {}
-        G, ty = pick.get("group"), pick.get("ty")
+        G, ty, order, span = pick.get("group"), pick.get("ty"), pick.get("order") or [], pick.get("span")
         y = None
-        if G and ty is not None:                 # same place as last time: after a clear the next quest slides into the same spot
-            self.drag_to(A, ty); y = self.find_heading(A, G)
+        n = inf.setdefault("skip", {}).get(G, 0) if G else 0
+        if G and ty is not None and span:      # same place as last time: after a clear the next quest slides into the same spot
+            ty, y = self.align(A, G, order, ty, span, n // 5)
         if y is None:
             inf["msg"] = "書庫の一覧を見ています（スクロールバー）"; print(f"書庫自動 {A.serial}: {inf['msg']}")
             found = self.survey(A)
-            groups = [g for _, g in found]
-            print(f"書庫自動 {A.serial}: 一覧のグループ → {' / '.join(dict.fromkeys(groups)) or '読めませんでした'}")
+            order = list(dict.fromkeys(g for _, g in found))
+            print(f"書庫自動 {A.serial}: 一覧のグループ → {' / '.join(order) or '読めませんでした'}")
             if not found:
                 return False
-            G = next((g for g in GROUP_ORDER if g in groups), None)
+            G = next((g for g in GROUP_ORDER if g in order), None)
             if not G:
-                self.run[i] = False; inf["msg"] = "止めました：残りは " + "・".join(dict.fromkeys(groups)) + "（超絶以上かマルチ専用）"
+                self.run[i] = False; inf["msg"] = "止めました：残りは " + "・".join(order) + "（超絶以上かマルチ専用）"
                 print(f"書庫自動 {A.serial}: {inf['msg']}"); return True
-            idx = groups.index(G); ty = found[idx][0] - (self.span[1] - self.span[0]) * random.uniform(.015, .03)
-            self.drag_to(A, ty); y = self.find_heading(A, G)
-            small = (self.span[1] - self.span[0]) * .015
-            for _ in range(8):           # nudge with the heading on top as a guide
-                if y is not None: break
-                cur = self.head(A)
-                if cur == G: ty -= small               # its own heading has scrolled up out of the list
-                elif cur in groups and groups.index(cur) < idx: ty += small
-                else: ty -= small
-                self.drag_to(A, ty); y = self.find_heading(A, G)
-        if y is None:
-            return False
-        n = inf.setdefault("skip", {}).get(G, 0); col, row = n % 5, n // 5
-        for _ in range(8):                      # the heading must be in the list (not the sticky one on top) and the quest on screen
-            if y is None: break
-            iy = y + w * (.146 + .18 * row)
-            if y < h * .48: ty -= 6
-            elif iy > h * .84: ty += 6
-            else: break
-            self.drag_to(A, ty); y = self.find_heading(A, G)
+            span = self.span[1] - self.span[0]; n = inf["skip"].get(G, 0)
+            ty = next(t for t, g in found if g == G) - span * random.uniform(.01, .02)
+            ty, y = self.align(A, G, order, ty, span, n // 5)
         if y is None:
             inf["pick"] = None; return False
+        data, off, w, h = A.raw_frame()
+        col, row = n % 5, n // 5
         iy = y + w * (.146 + .18 * row); ix = w * (.13 + .181 * col)
         time.sleep(random.uniform(.5, 1.8))
         A.tap(ix + random.uniform(-.025, .025) * w, iy + random.uniform(-.025, .025) * w, random.random())
-        inf["pick"] = {"group": G, "ty": ty}; inf["steps"] += 1
+        inf["pick"] = {"group": G, "ty": ty, "order": order, "span": span}; inf["steps"] += 1
         inf["msg"] = f"shuka_list：「{G}」の{n + 1}番目を押した"; print(f"書庫自動 {A.serial}: {inf['msg']}")
         inf["hist"] = (inf["hist"] + [f"書庫の一覧で「{G}」グループのクエストを押した" + ("（★5制限のクエスト）" if "★5" in G else "")])[-14:]
         time.sleep(random.uniform(1, 2))
