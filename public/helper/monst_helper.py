@@ -860,7 +860,7 @@ def ask_claude_state(png):
     if not st:
         hits = [k for k in SHUKA_STATES if k in txt]
         st = hits[0] if hits else "other"
-    note = next((l for l in lines if not any(l.lower().startswith(k) for k in SHUKA_STATES)), "")[:40]
+    note = next((l for l in lines if not any(k in l.lower() for k in SHUKA_STATES) and not l.startswith("`")), "")[:40]
     if st == "other":
         print("書庫: AIの答え（other）:", txt[:200].replace("\n", " / "))
     return st, note, txt
