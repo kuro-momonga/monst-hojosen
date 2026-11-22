@@ -17,7 +17,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 55
+HELPER_VER = 56
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -617,6 +617,7 @@ def make_handler(adbs):
     adb = adbs[0]
     W = Watcher(adbs)
     SH = Shuka(adbs)
+    AU = ShukaAuto(SH, adbs)
     class H(BaseHTTPRequestHandler):
         def cors(self):
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -651,7 +652,7 @@ def make_handler(adbs):
                 if self.path.rstrip("/") == "/shuka":
                     return self.reply(200, SHUKA_PAGE.encode(), "text/html; charset=utf-8")
                 if self.path.startswith("/shuka/state"):
-                    return self.reply(200, SH.status())
+                    return self.reply(200, {**SH.status(), "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k != "hist"}} for i in range(len(adbs))]})
                 if self.path.startswith("/shuka/limg"):
                     from urllib.parse import urlparse, parse_qs
                     lid = "".join(ch for ch in (parse_qs(urlparse(self.path).query).get("id") or [""])[0] if ch.isdigit())
@@ -720,6 +721,11 @@ def make_handler(adbs):
                 if self.path.startswith("/shuka/run"):
                     SH.on = bool(q.get("on")); print("書庫: 画面の判定を" + ("始めました" if SH.on else "止めました"))
                     return self.reply(200, SH.status())
+                if self.path.startswith("/shuka/auto"):
+                    i = int(q.get("i", 0)); AU.run[i] = bool(q.get("on")); SH.on = SH.on or AU.run[i]
+                    AU.info[i]["msg"] = "動いています" if AU.run[i] else "停止中"
+                    print(f"書庫自動 {adbs[i].serial}: " + ("開始" if AU.run[i] else "停止"))
+                    return self.reply(200, {"ok": True})
                 if self.path.startswith("/shuka/relabel"):
                     return self.reply(200, {"ok": SH.relabel(str(q["id"]), q["state"])})
                 if self.path.startswith("/shuka/fix"):
@@ -973,15 +979,175 @@ class Shuka:
                 "states": SHUKA_STATES, "learn": [{k: L.get(k) for k in ("id", "state", "note", "n")} for L in self.learn], "inst": [{k: v for k, v in s.items() if k in ("serial", "state", "note", "how", "t")} for s in self.inst]}
 
 
+
+
+# ======================= 書庫周回（段階2：自動で回す。画面ごとの操作はAIが決め、決まった操作は覚える） =======================
+SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク」をプレイしています。目的は「追憶の書庫」で、まだクリア報酬（オーブ）を受け取っていないクエストを1つずつクリアしていくことです。
+ルール：
+- ホーム画面では、真ん中の大きな「クエスト」ボタンを約1秒長押しする（前回のクエストへ飛ぶ）。
+- クエスト一覧では「追憶の書庫」を押す。
+- 書庫の一覧で絞り込みが「報酬未受取」になっていなければ、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
+- 書庫の一覧では、極 → 究極 → ★5制限 → 激究極 のグループの順に、一番上のクエストを選ぶ。見えなければ下へスクロールする。超絶など、それより難しいグループしか残っていなければ止める（stop）。
+- クエスト詳細では、一番上の難易度を押す。クエスト名の帯に「CLEAR!」が付いていたら、左上の青い戻る矢印で一覧に戻る。
+- 助っ人選択では「現在のフレンド使用キャラ」の一番上を押す。
+- デッキ選択では、デッキ名が★5制限のクエストなら「書庫★5制限」、それ以外は「書庫周回」になっているか確かめる。違えばデッキ欄（左右の青い矢印の間）を左右にスワイプして切り替える。合っていれば「出撃」。
+- 読み込み中・通信中・演出中は待つ（wait）。
+- リザルトやスペシャル報酬は画面を押して進める。OKボタンがあれば押す。
+- 確認ウィンドウはOKを押す（購入・オーブ消費・コンティニューは押さない）。
+- 負けた画面では「あきらめる」を押す。
+- 分からない・危ない画面では stop。
+"""
+SHUKA_ACT_FMT = """次の操作を1つ決めて、JSONだけで答えてください（説明文は不要）。座標はこの画像のピクセル（左上が0,0、幅{W}、高さ{H}）。
+{{"state":"<画面の名前: {states}>","action":"tap|longpress|swipe|wait|back|stop","x":0,"y":0,"x2":0,"y2":0,"why":"20文字以内","fixed":true}}
+- tap / longpress は押す点の中心。swipe は (x,y) から (x2,y2) へ。
+- fixed は「この画面ならいつも同じ場所を押せばいい」なら true、そのときの中身（どのクエストか等）で押す場所が変わるなら false。
+直前の操作（古い順）: {hist}"""
+
+
+def ask_claude_action(png, W, H, hist):
+    import base64, urllib.request, urllib.error, re
+    key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
+    if not key:
+        return None, "APIキーが未設定"
+    text = SHUKA_GOAL + "\n" + SHUKA_ACT_FMT.format(W=W, H=H, states="|".join(SHUKA_STATES), hist=" / ".join(hist[-6:]) or "なし")
+    body = {"model": SHUKA_MODEL, "max_tokens": 1500, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": text}]}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            j = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return None, f"AIエラー {e.code}: {e.read().decode(errors='ignore')[:80]}"
+    txt = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
+    m = re.search(r"\{.*\}", txt, re.S)
+    if not m:
+        return None, "AIの答えを読めません: " + txt[:60]
+    try:
+        a = json.loads(m.group(0))
+    except Exception:
+        return None, "AIの答えを読めません: " + txt[:60]
+    if a.get("action") not in ("tap", "longpress", "swipe", "wait", "back", "stop"):
+        return None, "知らない操作: " + str(a.get("action"))
+    return a, ""
+
+
+def ask_claude_battle(png, W, H, who):
+    """our turn: where is the character labelled `who` (1st..4th) and the nearest other character"""
+    import base64, urllib.request, urllib.error, re
+    key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
+    text = (f"モンストのバトル画面です。フィールド上で「{who}」と書かれた札の付いた味方キャラ（丸いアイコン）の中心と、"
+            f"それ以外で一番近い味方キャラ（1st/2nd/3rd/4thの札が付いている）の中心を答えてください。座標はこの画像のピクセル（幅{W}、高さ{H}）。"
+            'JSONだけで: {"me":[x,y],"ally":[x,y]}')
+    body = {"model": SHUKA_MODEL, "max_tokens": 1500, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": text}]}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            j = json.loads(r.read())
+        txt = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
+        a = json.loads(re.search(r"\{.*\}", txt, re.S).group(0))
+        return [float(v) for v in a["me"]], [float(v) for v in a["ally"]]
+    except Exception as e:
+        return None, None
+
+
+class ShukaAuto:
+    """one worker per instance: look -> decide (learned or AI) -> act -> random wait. Stops on its own when unsure."""
+    def __init__(self, sh, adbs):
+        self.sh, self.adbs = sh, adbs
+        self.run = [False] * len(adbs)
+        self.info = [{"msg": "停止中", "steps": 0, "clears": 0, "hist": []} for _ in adbs]
+        import threading
+        for i, A in enumerate(adbs):
+            threading.Thread(target=self.loop, args=(i, A), daemon=True).start()
+
+    def act(self, A, a, k, seed):
+        rng = random.Random(seed); kind = a["action"]
+        x, y = float(a.get("x", 0)) * k, float(a.get("y", 0)) * k
+        if kind == "tap":
+            A.tap(x, y, seed)
+        elif kind == "longpress":
+            A.run("shell", "input", "swipe", *map(str, (round(x + rng.uniform(-6, 6)), round(y + rng.uniform(-6, 6)),
+                  round(x + rng.uniform(-3, 3)), round(y + rng.uniform(-3, 3)), round(rng.uniform(950, 1300)))), timeout=15)
+        elif kind == "swipe":
+            x2, y2 = float(a.get("x2", 0)) * k, float(a.get("y2", 0)) * k
+            A.run("shell", "input", "swipe", *map(str, (round(x + rng.uniform(-8, 8)), round(y + rng.uniform(-8, 8)),
+                  round(x2 + rng.uniform(-8, 8)), round(y2 + rng.uniform(-8, 8)), round(rng.uniform(350, 700)))), timeout=15)
+        elif kind == "back":
+            A.run("shell", "input", "keyevent", "4", timeout=10)
+
+    def loop(self, i, A):
+        inf = self.info[i]; same = 0; last_sig = None
+        while True:
+            if not self.run[i]:
+                time.sleep(1); continue
+            try:
+                if not A.size: A.connect()
+                data, off, w, h = A.raw_frame()
+                k = turn_from_rgba(data, off, w, h)
+                if k:   # our turn in a battle
+                    inf["msg"] = f"バトル：{ORD.get(k)} の番"
+                    time.sleep(random.uniform(.5, 3))
+                    me, ally = ask_claude_battle(png_small(data, off, w, h, 2), w // 2, h // 2, ORD.get(k))
+                    if me:
+                        cx, cy = me[0] * 2, me[1] * 2; tx, ty = ally[0] * 2, ally[1] * 2
+                        ang = math.degrees(math.atan2(ty - cy, tx - cx)) + random.uniform(-2, 2)
+                    else:      # could not read the field: shoot upwards somewhere
+                        cx, cy = w / 2, h * .55; ang = random.uniform(-150, -30)
+                    A.shoot(ang, cx, cy, 1200, 120, True, "auto", random.random())
+                    inf["steps"] += 1; inf["hist"].append(f"バトルで{ang:.0f}°に打った")
+                    time.sleep(random.uniform(6, 9)); continue
+                if self.sh._panel(data, off, w, h):          # battle, not our turn
+                    inf["msg"] = "バトル：待ち"; time.sleep(random.uniform(1.5, 2.5)); continue
+                sig = screen_sig(data, off, w, h)
+                if sum(_gray_grid(data, off, w, h, 0, 1, 6, 10)) / 60 < 18:
+                    inf["msg"] = "読み込み中"; time.sleep(random.uniform(2, 4)); continue
+                same = same + 1 if last_sig and sig_dist(sig, last_sig) < .02 else 0; last_sig = sig
+                if same >= 8:
+                    self.run[i] = False; inf["msg"] = "止めました：同じ画面から進めません"; print(f"書庫自動 {A.serial}: 止めました（同じ画面のまま）"); continue
+                # a learned fixed action for this look?
+                L = min((L for L in self.sh.learn if L.get("act")), key=lambda L: sig_dist(sig, L["sig"]), default=None)
+                if L and sig_dist(sig, L["sig"]) < .05:
+                    a = dict(L["act"]); how = "覚えた操作"; kk = w / L["act"].get("W", w // 2) if L["act"].get("W") else 2
+                else:
+                    a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, inf["hist"])
+                    with self.sh.lock: self.sh.ai_calls += 1
+                    if not a:
+                        inf["msg"] = "AI：" + err; time.sleep(8); continue
+                    how = "AI"; kk = 2
+                    if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("shuka_list", "quest_detail", "deck_select", "filter", "quest_list"):
+                        with self.sh.lock:
+                            self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
+                            self.sh.learn[-1]["act"] = {**{x: a.get(x) for x in ("action", "x", "y", "x2", "y2")}, "W": w // 2}; self.sh.save()
+                st = a.get("state", "?"); why = a.get("why", "")
+                inf["msg"] = f"{st}：{a['action']}（{how}）{why}"
+                print(f"書庫自動 {A.serial}: {inf['msg']}")
+                if a["action"] == "stop":
+                    self.run[i] = False; inf["msg"] = "止めました：" + (why or st); continue
+                if a["action"] == "wait":
+                    time.sleep(random.uniform(2, 5)); continue
+                time.sleep(random.uniform(2, 15))                       # human-like pause before acting
+                self.act(A, a, kk, random.random())
+                inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-12:]
+                if st == "result": inf["clears"] += 0.25
+                time.sleep(random.uniform(1.5, 3))
+            except Exception as e:
+                inf["msg"] = "エラー：" + str(e)[:80]; time.sleep(5)
+
+
 SHUKA_PAGE = """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>書庫周回（画面の判定）</title><style>
+<title>書庫周回</title><style>
 body{margin:0;background:#0f1115;color:#e8eaef;font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
 header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #2a2f3a}
 h1{font-size:17px;margin:0}button,select,input{font:inherit;font-size:14px;border-radius:8px;border:1px solid #2a2f3a;background:#1c2029;color:#e8eaef;padding:8px 12px}
 button.on{background:#1f5a3a;border-color:#3ddc84}.small{font-size:12px;color:#8b93a3}
 main{display:flex;gap:16px;flex-wrap:wrap;padding:16px}.c{background:#171a21;border:1px solid #2a2f3a;border-radius:12px;padding:12px;width:300px;display:flex;flex-direction:column;gap:8px}
 .c img{width:100%;border-radius:8px;background:#000;min-height:200px}.st{font-size:22px;font-weight:800;color:#ffcf3f}
-</style></head><body><header><h1>書庫周回：画面の判定（まだ何も押しません）</h1>
+</style></head><body><header><h1>書庫周回</h1>
 <button id="run">判定を始める</button><span id="info" class="small"></span><span style="flex:1"></span>
 <span id="keybox" class="small"></span></header><main id="m"></main>
 <h2 style="font-size:15px;margin:8px 16px">覚えた画面（違っていたら直す・消す）</h2><main id="L"></main><script>
@@ -989,14 +1155,17 @@ let S=null;const $=id=>document.getElementById(id);
 async function post(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
 async function tick(){try{S=await (await fetch('/shuka/state')).json();render();}catch(e){$('info').textContent='ヘルパーにつながりません';}}
 function render(){$('run').textContent=S.on?'判定を止める':'判定を始める';$('run').classList.toggle('on',S.on);
-$('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}（約${(S.ai_calls*0.03).toFixed(1)}円）`;
+$('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}（約${(S.ai_calls*0.02).toFixed(2)}円）`;
 if(S.key)$('keybox').textContent='APIキー：設定済み';
 else if(!$('k')){$('keybox').innerHTML='APIキー未設定 <input id="k" type="password" placeholder="sk-ant-..." style="width:180px"> <button id="ks">保存</button>';
 $('ks').onclick=async()=>{const r=await post('/shuka/key',{key:$('k').value.trim()});if(!r.ok)alert(r.error);else{$('keybox').textContent='APIキー：設定済み';tick();}};}
 const opts=Object.entries(S.states).map(([k,v])=>`<option value="${k}">${k}：${v}</option>`).join('');
 $('m').innerHTML=S.inst.map((s,i)=>`<div class="c"><div class="small">${i+1}画面目 ${s.serial}</div><div class="st">${s.state}</div>
 <div class="small">${s.note||''} ${s.how?'・'+s.how:''}</div><img src="/shuka/thumb?i=${i}&t=${s.t}" alt="">
+<button data-a="${i}" class="${S.auto&&S.auto[i].on?'on':''}">${S.auto&&S.auto[i].on?'自動を止める':'この画面を自動で回す'}</button>
+<div class="small">${S.auto?S.auto[i].msg+' ・操作'+S.auto[i].steps+'回':''}</div>
 <div class="small">違っていたら直す：</div><select data-i="${i}"><option value="">選ぶ…</option>${opts}</select></div>`).join('');
+document.querySelectorAll('button[data-a]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.a;await post('/shuka/auto',{i,on:!(S.auto&&S.auto[i].on)});tick();});
 document.querySelectorAll('select[data-i]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/fix',{i:+x.dataset.i,state:x.value});tick();}});
 const sig=S.learn.map(l=>l.id+l.state).join();if(sig!==window._ls){window._ls=sig;
 $('L').innerHTML=S.learn.map(l=>`<div class="c" style="width:170px"><div class="st" style="font-size:16px">${l.state}</div><div class="small">${l.note||''} ・${l.n}回</div>
