@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 108
+HELPER_VER = 109
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1856,8 +1856,16 @@ class ShukaAuto:
             for kind, b in decks:
                 d = bits_dist(bits, b); best[kind] = min(best.get(kind, 9), d)
             ok = sorted(best.items(), key=lambda kv: kv[1])
-            if ok and ok[0][1] < .04 and (len(ok) == 1 or ok[1][1] - ok[0][1] > .03) and len(best) >= 2:
+            if ok and ((len(ok) >= 2 and ok[0][1] < .04 and ok[1][1] - ok[0][1] > .03) or (len(ok) == 1 and ok[0][1] < .02)):
                 return ok[0][0]
+            # not sure from the look: read just the small strip with the name (a few tokens), not the whole screen
+            x0, y0, x1, y1 = self.deck_box()
+            kind, txt = ask_claude_deckname(png_crop(data, off, w, h, x0, y0 - .01, x1, y1 + .01))
+            with self.sh.lock: self.sh.ai_calls += 1
+            if kind in ("normal", "star5"):
+                log_line(A, f"デッキ名を読みました（名前の部分だけ）→「{txt}」（{kind}）")
+                decks.append([kind, [round(v, 3) for v in bits]]); del decks[:-12]; self.save_pos()
+                return kind
         r = None
         for _ in range(2):
             r = ask_claude_deck(png_small(data, off, w, h, 3), w // 3, h // 3)
