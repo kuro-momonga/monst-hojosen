@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 93
+HELPER_VER = 94
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1516,13 +1516,13 @@ def find_labels(data, off, w, h):
     return [(nn, v[0], v[1]) for nn, v in res.items()] + [(0, x, y) for nn, x, y, sc in out if not nn]
 
 
-def read_labels(A, data, off, w, h):
+def read_labels(A, data, off, w, h, deadline=None):
     """1st..4th labels, with two helps for labels the shape match could not read for sure (one half hidden behind
     another ball, an effect over it): a second look a moment later, and for each still-missing number the unread
     blob that looks most like it (a weaker match is enough once the other numbers are placed)."""
     L = find_labels(data, off, w, h); cands = list(getattr(find_labels, "cands", []))
     known = {n: (x, y) for n, x, y in L if n}
-    if len(known) < 4:
+    if len(known) < 4 and (deadline is None or time.time() < deadline - 1.5):
         time.sleep(.25)
         try:
             d2, o2, w2, h2 = A.raw_frame()
@@ -1896,11 +1896,13 @@ class ShukaAuto:
         self.run[i] = False; inf["msg"] = "止めました：" + why; log_line(A, inf["msg"])
 
     def battle(self, i, A, inf, data, off, w, h, k):
-        inf["battle_t"] = inf["turn_t"] = time.time(); inf["in_quest"] = True
-        pause(.4, 2.2)
+        t0 = time.time(); inf["battle_t"] = inf["turn_t"] = t0; inf["in_quest"] = True
+        # the shot leaves within about 5 s of our turn: a short wait, the labels (a second look only if time allows),
+        # and if they are not read in time, a sideways shot
+        time.sleep(random.uniform(.3, 1.0))
         data, off, w, h = A.raw_frame()                     # the field may have moved while we waited
         if not turn_from_rgba(data, off, w, h): return
-        L = read_labels(A, data, off, w, h)
+        L = read_labels(A, data, off, w, h, deadline=t0 + 3.8) if time.time() < t0 + 3 else []
         me = next(((x, y) for n, x, y in L if n == k), None)
         others = [(x, y) for n, x, y in L if n and n != k]
         if me and others:      # aim at the nearest other ball: friendship combos do the work
