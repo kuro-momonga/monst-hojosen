@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 111
+HELPER_VER = 112
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1914,6 +1914,7 @@ class ShukaAuto:
         Order of the decks: ... 書庫周回, 書庫★5制限, (デッキ5) ...  ★5 is the next deck to the RIGHT of 周回.
         To go to the deck on the right: finger right -> left. To the deck on the left: finger left -> right."""
         name = "書庫★5制限" if want == "star5" else "書庫周回"
+        inf["expect_deck"] = None
         try:
             d0, o0, w0, h0 = A.raw_frame(); low = [round(v, 1) for v in _gray_grid(d0, o0, w0, h0, .45, .97, 8, 10)]
             dl = self.pos.setdefault("deck_low", [])
@@ -2272,6 +2273,17 @@ class ShukaAuto:
                 for x in ("x", "y", "x2", "y2"):
                     if a.get(x) is not None: a[x] = float(a[x]) * 2
         else:
+            # right after the helper was chosen the next screen is the deck select. When the deck is already known for
+            # this difficulty, never ask the AI about it: press 出撃 where it was found (if a teal button is there).
+            if inf.get("expect_deck") and now - inf["expect_deck"] < 20 and inf.get("deck") == want \
+                    and inf.get("deck_for") == G and self.pos.get("go"):
+                gx, gy = self.pos["go"]
+                if _frac(data, off, w, h, (gx - .08, gy - .02, gx + .08, gy + .02), _TEAL) > .25:
+                    pause(.5, 1.5); A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
+                    inf["expect_deck"] = None; inf["battle_t"] = time.time()
+                    inf["msg"] = f"デッキ：{'書庫★5制限' if want == 'star5' else '書庫周回'}のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
+                    time.sleep(random.uniform(1.5, 2.5)); return
+                time.sleep(random.uniform(.8, 1.4)); return          # not shown yet: look again (no AI)
             # a window with exactly one orange button (攻略のヒントの OK, リザルトの OK, 日付が変わりました ...):
             # that button only moves things on. Press it ourselves, wherever the text pushed it - no AI.
             if _frac(data, off, w, h, (.1, .4, .42, .6), _BLUE) < .2:
@@ -2350,6 +2362,7 @@ class ShukaAuto:
         if a["action"] == "wait":
             time.sleep(random.uniform(1, 2.5)); return
         pause(.6, 2.2) if how == "AI" else pause(1, 3)
+        if st == "helper_select": inf["expect_deck"] = time.time()
         self.act(A, a, 1, random.random())
         inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"{st}で{a['action']}（{why}）"])[-14:]
         time.sleep(random.uniform(.8, 1.6))
