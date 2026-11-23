@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 82
+HELPER_VER = 83
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1724,39 +1724,38 @@ class ShukaAuto:
         return is_deck_select(data, off, w, h)
 
     def deck_now(self, A, data, off, w, h):
-        """which deck is shown. The first time the AI looks at the whole screen once (deck name, where it is, where 出撃 is);
-        after that the deck name's look is matched (per account), and only a never-seen name is read again (small crop)."""
+        """which deck is shown. A learned look of the deck name is trusted only when it clearly matches one kind and
+        clearly not the other; otherwise the AI looks at the whole screen (and the place of the name is learned again)."""
         decks = self.pos.setdefault("decknames", {}).setdefault(A.serial, [])     # [[kind, bits]]
-        if not self.deck_box():
-            r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
-            with self.sh.lock: self.sh.ai_calls += 1
-            if not r: return None
-            try:
-                self.pos["go"] = [float(r["go"][0]) * 2 / w, float(r["go"][1]) * 2 / h]
-                self.pos["deck_y"] = float(r["name_y"]) * 2 / h
-                self.pos["deck_sig"] = [round(v, 1) for v in screen_sig(data, off, w, h)]
-            except Exception: return None
-            decks.clear()
-            kind = r.get("deck"); log_line(A, f"デッキ名を読みました →「{r.get('name')}」（{kind}）")
-            decks.append([kind, [round(v, 3) for v in deck_bits(data, off, w, h, self.deck_box())]]); self.save_pos()
-            return kind
-        bits = deck_bits(data, off, w, h, self.deck_box())
-        best = min(decks, key=lambda d: bits_dist(bits, d[1]), default=None)
-        if best and bits_dist(bits, best[1]) < .05:
-            return best[0]
-        x0, y0, x1, y1 = self.deck_box()
-        kind, txt = ask_claude_deckname(png_crop(data, off, w, h, x0, y0 - .01, x1, y1 + .01))
+        if self.deck_box():
+            bits = deck_bits(data, off, w, h, self.deck_box())
+            best = {}
+            for kind, b in decks:
+                d = bits_dist(bits, b); best[kind] = min(best.get(kind, 9), d)
+            ok = sorted(best.items(), key=lambda kv: kv[1])
+            if ok and ok[0][1] < .04 and (len(ok) == 1 or ok[1][1] - ok[0][1] > .03) and len(best) >= 2:
+                return ok[0][0]
+        r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
         with self.sh.lock: self.sh.ai_calls += 1
-        if not kind: return None
-        log_line(A, f"デッキ名を読みました →「{txt}」（{kind}）")
-        decks.append([kind, [round(v, 3) for v in bits]]); del decks[:-12]; self.save_pos()
+        if not r: return None
+        try:
+            ny = float(r["name_y"]) * 2 / h
+            if abs(ny - (self.pos.get("deck_y") or ny)) > .015: decks.clear()        # the name is elsewhere: old looks are useless
+            self.pos["go"] = [float(r["go"][0]) * 2 / w, float(r["go"][1]) * 2 / h]
+            self.pos["deck_y"] = ny
+            self.pos["deck_sig"] = [round(v, 1) for v in screen_sig(data, off, w, h)]
+        except Exception: return None
+        kind = r.get("deck"); log_line(A, f"デッキ名を読みました →「{r.get('name')}」（{kind}）")
+        if kind in ("normal", "star5"):
+            decks.append([kind, [round(v, 3) for v in deck_bits(data, off, w, h, self.deck_box())]]); del decks[:-12]
+        self.save_pos()
         return kind
 
     def deck(self, A, i, inf, want):
         """deck select: make sure the shown deck is 書庫周回 / 書庫★5制限 as needed, then 出撃.
         The two decks sit next to each other: one swipe to the left (finger right -> left) switches between them."""
         name = "書庫★5制限" if want == "star5" else "書庫周回"
-        for k in range(6):
+        for k in range(4):
             data, off, w, h = A.raw_frame()
             if k and not self.on_deck(data, off, w, h): return True       # the screen moved on
             cur = self.deck_now(A, data, off, w, h)
