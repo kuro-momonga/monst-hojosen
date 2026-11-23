@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 88
+HELPER_VER = 89
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1932,7 +1932,7 @@ class ShukaAuto:
                 # on the クエスト letters / just under them; the SHORT CUT band (y .72-.77) jumps somewhere else
                 x, y = w * random.uniform(.45, .55), h * random.uniform(.80, .835)
                 A.run("shell", "input", "swipe", *map(str, (round(x), round(y), round(x + random.uniform(-4, 4)), round(y + random.uniform(-4, 4)), round(random.uniform(950, 1300)))), timeout=15)
-                inf["after_lp"] = True; inf["msg"] = "ホーム：クエストを長押し"
+                inf["after_lp"] = True; inf["lp_t"] = time.time(); inf["lp_backs"] = 0; inf["msg"] = "ホーム：クエストを長押し"
             else:                            # first time: a plain tap on the lower half (the SHORT CUT part jumps elsewhere)
                 A.tap(w * random.uniform(.44, .56), h * random.uniform(.825, .855), random.random())
                 inf["msg"] = "ホーム：クエストをタップ"
@@ -1977,6 +1977,17 @@ class ShukaAuto:
             return            # the list is ours: never ask the AI about it
         else:
             inf["_pickfail"] = False
+
+        # ---- after the long press we expect the cleared quest's page; if the SHORT CUT fired instead we are on the
+        #      solo / helper / deck screens of the old quest: never start it again, go back until the list ----
+        if inf.get("after_lp") and not is_shuka_list(data, off, w, h) and not quest_bands(data, off, w, h):
+            if self.on_deck(data, off, w, h, sig) or is_play_type(data, off, w, h) or (now - inf.get("lp_t", now) > 4):
+                inf["lp_backs"] = inf.get("lp_backs", 0) + 1
+                if inf["lp_backs"] <= 5:
+                    pause(.6, 1.6); tap_back(A, w, h)
+                    inf["msg"] = "長押しで出撃直前まで飛んだので戻る"; log_line(A, inf["msg"])
+                    time.sleep(random.uniform(1.2, 2)); return
+                inf["after_lp"] = False
 
         # ---- deck select ----
         if self.on_deck(data, off, w, h, sig) and same < 3 and self.rule(inf, "deck"):
