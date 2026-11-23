@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 104
+HELPER_VER = 105
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2189,7 +2189,11 @@ class ShukaAuto:
         fs = full_sig(data, off, w, h)
         L = min((L for L in self.sh.learn if L.get("act") and sig_dist(sig, L["sig"]) < .05
                  and (L["act"].get("full") is not None)), key=lambda L: sig_dist(fs, L["act"]["full"]), default=None)
-        if L and sig_dist(fs, L["act"]["full"]) > (.14 if L.get("state") == "result" else .09): L = None
+        if L:
+            # screens whose middle text changes every time but whose button stays put: a looser match
+            wy = L["act"].get("why") or ""
+            loose = L.get("state") == "result" or "ヒント" in wy or "EXTRA" in wy.upper()
+            if sig_dist(fs, L["act"]["full"]) > (.16 if loose else .09): L = None
         if L and same >= 3:                      # pressed it and nothing changed: forget it
             with self.sh.lock: L.pop("act", None); self.sh.save()
             L = None
