@@ -14,11 +14,11 @@
 必要なもの: Python 3（標準ライブラリだけで動きます）、adb（BlueStacks 付属の HD-Adb.exe を自動で探します）
 """
 import re
-import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
+import argparse, json, math, os, random, shutil, struct, subprocess, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 113
+HELPER_VER = 114
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -619,6 +619,7 @@ def make_handler(adbs):
     W = Watcher(adbs)
     SH = Shuka(adbs)
     AU = ShukaAuto(SH, adbs)
+    threading.Thread(target=phone_pusher, args=(AU, SH), daemon=True).start()
     class H(BaseHTTPRequestHandler):
         def cors(self):
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -1614,6 +1615,31 @@ def read_labels(A, data, off, w, h, deadline=None):
     return [(n, x, y) for n, (x, y) in known.items()]
 
 
+PHONE_TOKEN = "YOAIPXkIZdkM9kDjR1rTUVlY"
+PHONE_URL = "https://square-brook-4757.naraonara123.workers.dev/st/" + PHONE_TOKEN
+
+
+def phone_pusher(AU, SH):
+    """every ~30 s send a small status to the tool's site, so the phone page (PHONE_URL) can show it"""
+    import base64, urllib.request
+    while True:
+        try:
+            md = time.strftime("%m/%d")
+            st = {"yen": round(ai_yen(), 3), "clears": len(AU.log),
+                  "orbs_today": sum(l.get("orb", 0) for l in AU.log if str(l.get("t", "")).startswith(md)),
+                  "log": AU.log[-15:], "inst": []}
+            for i, inf in enumerate(AU.info):
+                st["inst"].append({"on": AU.run[i], "msg": inf.get("msg", ""), "clears": inf.get("clears", 0),
+                                   "diff": DIFFS[min(inf.get("diff", 0), len(DIFFS) - 1)], "done": inf.get("diff", 0) >= len(DIFFS),
+                                   "png": base64.b64encode(inf["png_s"]).decode() if AU.run[i] and inf.get("png_s") else ""})
+            req = urllib.request.Request(PHONE_URL, data=json.dumps(st, ensure_ascii=False).encode(), method="POST",
+                                         headers={"content-type": "application/json", "User-Agent": "Mozilla/5.0 monst-helper"})
+            urllib.request.urlopen(req, timeout=15).read()
+        except Exception:
+            pass
+        time.sleep(random.uniform(25, 35))
+
+
 def pause(a, b):
     """a human-like wait: usually a..b seconds, now and then a longer look"""
     time.sleep(random.uniform(a, b) if random.random() > .07 else random.uniform(b + 1.5, b + 5))
@@ -2046,7 +2072,9 @@ class ShukaAuto:
         now = time.time()
         if now - inf.get("shot_t", 0) > 2.5:          # the page shows what this screen looks like right now
             inf["shot_t"] = now
-            try: self.sh.inst[i].update(png=png_small(data, off, w, h, 6), t=int(now), state="自動", note=inf.get("msg", ""), how="")
+            try:
+                self.sh.inst[i].update(png=png_small(data, off, w, h, 6), t=int(now), state="自動", note=inf.get("msg", ""), how="")
+                inf["png_s"] = png_small(data, off, w, h, 12)       # tiny one for the phone page
             except Exception: pass
         inf["force_look"] = False          # set below only for this round
         # ---- battle ----
@@ -2514,6 +2542,7 @@ def main():
             print(f"{A.serial} にまだ接続できていません: {e}\n（BlueStacks を起動して ADB をオンにしてください）")
     print(f"ヘルパー v{HELPER_VER} 起動中: http://127.0.0.1:{LISTEN}  （このウィンドウを閉じると止まります）")
     print(f"書庫周回の画面判定: http://127.0.0.1:{LISTEN}/shuka をブラウザで開く")
+    print(f"スマホで見る: {PHONE_URL}")
     ThreadingHTTPServer(("127.0.0.1", LISTEN), make_handler(adbs)).serve_forever()
 
 
