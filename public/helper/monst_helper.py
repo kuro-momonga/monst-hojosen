@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 85
+HELPER_VER = 86
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1941,15 +1941,14 @@ class ShukaAuto:
                 if f:     # the heading right above the first icon says which difficulty the list shows
                     yc = f[0] / h - .022
                     top_name = self.name_of(head_bits(data, off, w, h, yc), lambda: png_crop(data, off, w, h, 0, yc - .05, .55, yc + .05))
-                if inf.get("filter_for") != D and top_name and canon(top_name) == GROUP_KEYS[di]:
-                    inf["filter_for"] = D; log_line(A, f"一覧はもう「{D}」に絞り込まれています")
                 if inf.get("filter_for") != D:
                     tries = inf.setdefault("filter_try", {}); tries[D] = tries.get(D, 0) + 1
                     if tries[D] > 4:
                         return self.stop(i, A, inf, f"絞り込みを「{D}」にできませんでした")
                     # press 表示順変更 ourselves (not the round 一覧 next to it); the AI then works the filter window
                     inf["need_filter"] = True; inf["filter_target"] = D
-                    inf["hist"] = (inf["hist"] + [f"絞り込みが必要：「絞り込み」で 難易度を「{D}」、初クリア報酬を「報酬未受取」にして「決定」"])[-14:]
+                    # the list alone cannot show whether 報酬未受取 is on: open the filter every time it is not confirmed yet
+                    inf["hist"] = (inf["hist"] + [f"絞り込みの確認：「絞り込み」で 難易度が「{D}」、初クリア報酬が「報酬未受取」になっているか見て、違えば直して「決定」"])[-14:]
                     pause(.6, 1.6); A.tap(w * random.uniform(.68, .84), h * random.uniform(.125, .145), random.random())
                     log_line(A, f"表示順変更を開いた（難易度を「{D}」にする）"); time.sleep(random.uniform(1.2, 2)); return
                 if f is None:                                   # nothing left at this difficulty: next one
