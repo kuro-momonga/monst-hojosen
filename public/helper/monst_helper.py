@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 86
+HELPER_VER = 87
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1302,7 +1302,7 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - 書庫の一覧：プログラムが操作するので wait（何も押さない）。そのさらに右の丸い「一覧」ボタンは別の窓が出るので絶対に押さない（間違って開いたら閉じる）。
 - 絞り込み・並び替えの窓（state は filter）：上の「絞り込み」タブで、「難易度」の欄を押して流れで指定された難易度（極・★5以下制限・究極・激究極のどれか）を選び、「初クリア報酬」を「報酬未受取」にする。両方そうなっていれば緑の「決定」を押す（why に「決定」と書く）。開いた選択肢の一覧では、指定のものを1つ押す。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上のキャラを押す（fixed は true）。
-- デッキ選択でデッキ名が流れで指定されたもの（「書庫周回」か「書庫★5制限」）でなければ、デッキ欄を左にスワイプ（指を右から左へ）。この2つは左スワイプで交互に切り替わる。
+- デッキ選択でデッキ名が流れで指定されたもの（「書庫周回」か「書庫★5制限」）でなければ、デッキ欄を横にスワイプ。並びは「書庫周回」の右隣が「書庫★5制限」。右隣のデッキへは指を右から左へ、左隣へは指を左から右へ動かす。
 - リザルト・スペシャル報酬・ステージクリア・モンスター獲得・ランクアップ・レベルアップ・ラック・ログインボーナス・日付が変わりましたなどは、画面を押すか「OK」「閉じる」「次へ」で進める。
 - お知らせ・イベント告知・キャンペーンの窓は「閉じる」や右上の「×」で閉じる。
 - 通信エラーは「リトライ」「再試行」「OK」。タイトル画面は画面を押して始める。
@@ -1785,9 +1785,11 @@ class ShukaAuto:
 
     def deck(self, A, i, inf, want):
         """deck select: make sure the shown deck is 書庫周回 / 書庫★5制限 as needed, then 出撃.
-        The two decks sit next to each other: one swipe to the left (finger right -> left) switches between them."""
+        Order of the decks: ... 書庫周回, 書庫★5制限, (デッキ5) ...  ★5 is the next deck to the RIGHT of 周回.
+        To go to the deck on the right: finger right -> left. To the deck on the left: finger left -> right."""
         name = "書庫★5制限" if want == "star5" else "書庫周回"
-        for k in range(4):
+        go_right = None; prev = None
+        for k in range(5):
             data, off, w, h = A.raw_frame()
             if k and not self.on_deck(data, off, w, h): return True       # the screen moved on
             cur = self.deck_now(A, data, off, w, h)
@@ -1799,11 +1801,19 @@ class ShukaAuto:
                 inf["msg"] = f"デッキ：{name}で出撃"; log_line(A, inf["msg"])
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
                 inf["deck"] = want; time.sleep(random.uniform(1.5, 2.5)); return True
+            if cur in ("normal", "star5"):
+                go_right = cur == "normal"            # 周回 -> ★5 is to the right; ★5 -> 周回 is to the left
+            elif prev in ("normal", "star5"):
+                go_right = not go_right               # stepped off our pair onto another deck: turn back
+            elif go_right is None:
+                go_right = False                      # an unknown deck to start with: try the left first
+            prev = cur
             yy = h * (self.pos.get("deck_y", .45) + random.uniform(.03, .07))
-            x0 = w * random.uniform(.66, .74); x1 = x0 - w * random.uniform(.36, .44)
+            d = w * random.uniform(.36, .44); xm = w * random.uniform(.46, .54)
+            x0, x1 = (xm + d / 2, xm - d / 2) if go_right else (xm - d / 2, xm + d / 2)
             pause(.4, 1.2)
             A.run("shell", "input", "swipe", *map(str, (round(x0), round(yy), round(x1), round(yy + random.uniform(-8, 8)), round(random.uniform(280, 480)))), timeout=15)
-            log_line(A, f"デッキを左へスワイプ（{name}にする）"); time.sleep(random.uniform(1.1, 1.8))
+            log_line(A, f"デッキを{'右隣' if go_right else '左隣'}へ（{name}にする）"); time.sleep(random.uniform(1.1, 1.8))
         return False
 
     def act(self, A, a, k, seed):
