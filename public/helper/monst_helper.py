@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 101
+HELPER_VER = 102
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -740,7 +740,7 @@ def make_handler(adbs):
                     return self.reply(200, SH.status())
                 if self.path.startswith("/shuka/auto"):
                     i = int(q.get("i", 0)); AU.run[i] = bool(q.get("on")); SH.on = SH.on or AU.run[i]
-                    if AU.run[i]: AU.info[i].update(diff=0, filter_for=None, filter_try={}, h_last=None, same=0)     # every start: from 極 again
+                    if AU.run[i]: AU.info[i].update(diff=0, filter_for=None, filter_try={}, h_last=None, same=0, deck=None, deck_for=None)     # every start: from 極 again
                     AU.info[i]["msg"] = "動いています" if AU.run[i] else "停止中"
                     print(f"書庫自動 {adbs[i].serial}: " + ("開始" if AU.run[i] else "停止"))
                     return self.reply(200, {"ok": True})
@@ -1876,6 +1876,14 @@ class ShukaAuto:
         Order of the decks: ... 書庫周回, 書庫★5制限, (デッキ5) ...  ★5 is the next deck to the RIGHT of 周回.
         To go to the deck on the right: finger right -> left. To the deck on the left: finger left -> right."""
         name = "書庫★5制限" if want == "star5" else "書庫周回"
+        if inf.get("deck") == want and inf.get("deck_for") == (inf.get("pick") or {}).get("group"):
+            # same difficulty as the last quest: the game keeps the last deck, so no reading - straight to 出撃
+            data, off, w, h = A.raw_frame()
+            gx, gy = self.pos.get("go") or (.49, .825)
+            pause(.5, 1.6)
+            A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
+            inf["msg"] = f"デッキ：{name}のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
+            inf["battle_t"] = time.time(); time.sleep(random.uniform(1.5, 2.5)); return True
         go_right = None; prev = None
         for k in range(5):
             data, off, w, h = A.raw_frame()
@@ -1888,7 +1896,8 @@ class ShukaAuto:
                 A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
                 inf["msg"] = f"デッキ：{name}で出撃"; log_line(A, inf["msg"])
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
-                inf["deck"] = want; inf["battle_t"] = time.time(); time.sleep(random.uniform(1.5, 2.5)); return True
+                inf["deck"] = want; inf["deck_for"] = (inf.get("pick") or {}).get("group")
+                inf["battle_t"] = time.time(); time.sleep(random.uniform(1.5, 2.5)); return True
             if cur in ("normal", "star5"):
                 go_right = cur == "normal"            # 周回 -> ★5 is to the right; ★5 -> 周回 is to the left
             elif prev in ("normal", "star5"):
