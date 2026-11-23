@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 102
+HELPER_VER = 103
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1344,24 +1344,14 @@ class Shuka:
 
 
 # ======================= 書庫周回（段階2：自動で回す。画面ごとの操作はAIが決め、決まった操作は覚える） =======================
-SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク」の自動周回を見守っています。目的は「追憶の書庫」で、まだクリア報酬（オーブ）を受け取っていないクエストを1つずつソロでクリアしていくことです。
-いつもの流れ（ホーム → 書庫の一覧 → クエストのページ → ソロ → 助っ人 → デッキ → バトル）は、ほとんどプログラムが自分で進めます。あなたが呼ばれるのは、プログラムが知らない画面が出たときです。
-ルール：
-- ホーム画面：書庫のクエストをまだ1つも遊んでいなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップ。上の「SHORT CUT」や長押しは使わない。
-- クエスト一覧（ノーマル・イベントなどのアイコンが並ぶ）では「追憶の書庫」を押す。
-- 書庫の一覧：プログラムが操作するので wait（何も押さない）。そのさらに右の丸い「一覧」ボタンは別の窓が出るので絶対に押さない（間違って開いたら閉じる）。
-- 絞り込み・並び替えの窓（state は filter）：上の「絞り込み」タブで、「難易度」の欄を押して流れで指定された難易度（極・★5以下制限・究極・激究極のどれか）を選び、「初クリア報酬」を「報酬未受取」にする。両方そうなっていれば緑の「決定」を押す（why に「決定」と書く）。開いた選択肢の一覧では、指定のものを1つ押す。
-- 助っ人選択では「現在のフレンド使用キャラ」の一番上のキャラを押す（fixed は true）。
-- デッキ選択でデッキ名が流れで指定されたもの（「書庫周回」か「書庫★5制限」）でなければ、デッキ欄を横にスワイプ。並びは「書庫周回」の右隣が「書庫★5制限」。右隣のデッキへは指を右から左へ、左隣へは指を左から右へ動かす。
-- リザルト・スペシャル報酬・ステージクリア・モンスター獲得・ランクアップ・レベルアップ・ラック・ログインボーナス・日付が変わりましたなどは、画面を押すか「OK」「閉じる」「次へ」で進める。
-- お知らせ・イベント告知・キャンペーンの窓は「閉じる」や右上の「×」で閉じる。
-- 通信エラーは「リトライ」「再試行」「OK」。タイトル画面は画面を押して始める。
-- 負けた画面・コンティニュー確認では、コンティニューせず「あきらめる」（その後の確認も、あきらめる方）。
-- 書庫ポイントが足りない・ボックスがいっぱい・スタミナが足りない、など遊べなくなった表示は stop（why に理由）。
-- オーブ・お金を使う画面、購入画面、コンティニュー、どうしても分からない画面では stop。
-- EXTRA STAGE（エクストラステージ）は絶対に挑戦しない。出現の案内や「挑戦をあきらめますか？」の確認では、必ず「諦める」「あきらめる」「挑戦しない」の方を押す（「挑戦する」は押さない）。
-- 演出中・読み込み中は wait。「通信中」の小さな表示が出ていても、その奥にボタンのある窓があれば、それはボタン待ちなのでボタンを押してよい。
-- 上に書いていない画面でも、ソロで書庫のクエストを先に進める操作がはっきりしていれば（OK、次へ、閉じる など）それを選ぶ。戻るのは、書庫と関係ない場所に来てしまったときだけ。
+SHUKA_GOAL = """モンストの自動周回（追憶の書庫のクエストをソロで1つずつクリア）を見守っています。いつもの画面はプログラムが操作します。あなたが呼ばれるのは知らない画面のときだけです。
+- 絞り込みの窓（filter）：「絞り込み」タブで、難易度を流れで指定されたもの（極・★5以下制限・究極・激究極）に、初クリア報酬を「報酬未受取」にして、緑の「決定」（why に「決定」）。選択肢の一覧では指定のものを1つ押す。
+- クエスト一覧では「追憶の書庫」。助っ人選択では「現在のフレンド使用キャラ」の一番上（fixed true）。書庫の一覧では wait。右上の丸い「一覧」は押さない。
+- デッキ名が流れの指定と違えば横スワイプ（書庫周回の右隣が書庫★5制限。右隣へは指を右→左）。
+- リザルト・スペシャル報酬・獲得・ランクアップ・ログインボーナス・日付変更などは画面を押すか OK／閉じる／次へ。お知らせは閉じる・×。通信エラーはリトライ。タイトル画面は画面を押す。
+- EXTRA STAGE は絶対に挑戦しない（「諦める」「あきらめる」を押す）。負け・コンティニュー確認では「あきらめる」。
+- 書庫ポイント不足・ボックスいっぱい・スタミナ不足など遊べない表示は stop（why に理由）。オーブ・購入・コンティニューの画面、どうしても分からない画面も stop。
+- 読み込み・演出中は wait。「通信中」の表示があっても奥にボタンの窓があれば押してよい。先に進む操作がはっきりしていればそれを選び、戻るのは書庫と関係ない所に来たときだけ。
 """
 SHUKA_ACT_FMT = """次の操作を1つ決めて、JSONだけで答えてください（説明文は不要）。座標はこの画像のピクセル（左上が0,0、幅{W}、高さ{H}）。
 {{"state":"<画面の名前: {states}>","action":"tap|longpress|swipe|wait|back|stop","x":0,"y":0,"x2":0,"y2":0,"why":"20文字以内","fixed":true,"quest":""}}
@@ -1986,7 +1976,7 @@ class ShukaAuto:
         except RuntimeError:
             A.shoot(ang, w * random.uniform(.4, .6), h * random.uniform(.42, .52), ms, hold, True, "auto", random.random())
         inf["steps"] += 1; inf["msg"] = f"バトル：{ORD.get(k)} {how}（{ang:.0f}°）"; log_line(A, inf["msg"])
-        time.sleep(random.uniform(5, 7.5))
+        time.sleep(random.uniform(2.5, 3.5))     # the ball is still moving; the loop then waits for our next turn
 
     def rule(self, inf, name):
         """count how many times in a row the same code rule fired; after 4 the AI gets a look instead"""
@@ -2075,6 +2065,13 @@ class ShukaAuto:
             if di >= len(DIFFS):
                 return self.stop(i, A, inf, "極・★5以下制限・究極・激究極のクエストは全部終わりました")
             D = DIFFS[di]
+            inf["replay_wait"] = 0
+            if inf.get("replay") is not None:       # back on the list after replaying the filter presses
+                if not inf["replay"]:
+                    inf["filter_for"] = inf.pop("filter_target", None); log_line(A, f"絞り込み：覚えた押し方で「{inf['filter_for']}」にしました")
+                else:                               # stopped half way: forget those presses, the AI does it next time
+                    self.pos.get("filter_seq", {}).pop(D, None); self.save_pos()
+                inf["replay"] = None
             if same < 4 and self.rule(inf, "list"):
                 f = first_icon(data, off, w, h)
                 if inf.get("filter_for") != D:
@@ -2086,7 +2083,10 @@ class ShukaAuto:
                     # the list alone cannot show whether 報酬未受取 is on: open the filter every time it is not confirmed yet
                     inf["hist"] = (inf["hist"] + [f"絞り込みの確認：「絞り込み」で 難易度が「{D}」、初クリア報酬が「報酬未受取」になっているか見て、違えば直して「決定」"])[-14:]
                     pause(.6, 1.6); A.tap(w * random.uniform(.68, .84), h * random.uniform(.125, .145), random.random())
-                    log_line(A, f"表示順変更を開いた（難易度を「{D}」にする）"); time.sleep(random.uniform(1.2, 2)); return
+                    seq = self.pos.get("filter_seq", {}).get(D)
+                    inf["fsess"] = None if seq else {"D": D, "taps": []}     # record the AI's presses only when there is nothing to replay
+                    inf["replay"] = [list(p) for p in seq] if seq else None
+                    log_line(A, f"表示順変更を開いた（難易度を「{D}」にする{'・覚えた押し方で' if seq else ''}）"); time.sleep(random.uniform(1.2, 2)); return
                 if f is None:
                     # looks empty - but a list that is still loading or sliding in looks the same: only after
                     # 3 looks in a row over a few seconds, with the search bar showing, is it really empty
@@ -2158,6 +2158,7 @@ class ShukaAuto:
                     inf["from_list"] = False; pause(.6, 1.6); tap_back(A, w, h)
                     inf["clear_seen"] = inf.get("clear_seen", 0) + 1
                     if inf["clear_seen"] == 1:
+                        self.pos.get("filter_seq", {}).pop(G, None); self.save_pos()
                         inf["filter_for"] = None; inf["msg"] = "CLEAR済みのクエスト：戻って絞り込みを直す"
                         inf["hist"] = (inf["hist"] + ["一覧にCLEAR済みが出ていた。絞り込みが必要：表示順変更→初クリア報酬を「報酬未受取」→決定"])[-14:]
                     else:
@@ -2170,6 +2171,18 @@ class ShukaAuto:
                     inf["msg"] = f"クエストのページ：一番上の難易度（{G or '?'}）"
                 log_line(A, inf["msg"]); inf["steps"] += 1; inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]
                 time.sleep(random.uniform(1.2, 2)); return
+
+        # ---- the filter window, when its presses for this difficulty were learned: replay them (no AI) ----
+        if inf.get("replay") is not None and not is_shuka_list(data, off, w, h):
+            if inf["replay"]:
+                x, y = inf["replay"].pop(0)
+                pause(.5, 1.4); A.tap(w * (x + random.uniform(-.012, .012)), h * (y + random.uniform(-.006, .006)), random.random())
+                inf["msg"] = "絞り込み：覚えた押し方で操作中"; time.sleep(random.uniform(.9, 1.5)); return
+            # all presses done but the list is not back yet: give it a few looks (the window may be closing)
+            inf["replay_wait"] = inf.get("replay_wait", 0) + 1
+            if inf["replay_wait"] <= 3:
+                time.sleep(random.uniform(.8, 1.3)); return
+            inf["replay"] = None; inf["replay_wait"] = 0       # still open: the AI looks (it may need one more press)
 
         # ---- anything else: a learned press for this exact look, or the AI ----
         fs = full_sig(data, off, w, h)
@@ -2235,7 +2248,12 @@ class ShukaAuto:
         if st == "shuka_list" and a["action"] == "tap" and float(a.get("x") or 0) > w * .875 and float(a.get("y") or 0) < h * .2:
             # the round 一覧 button right of 表示順変更 opens another window: press 表示順変更 instead
             a["x"], a["y"] = w * random.uniform(.68, .84), h * random.uniform(.125, .145); why += "（一覧ボタンではなく表示順変更）"
+        if st == "filter" and a["action"] == "tap" and inf.get("fsess") is not None:
+            inf["fsess"]["taps"].append([round(float(a["x"]) / w, 4), round(float(a["y"]) / h, 4)])
         if st == "filter" and "決定" in why and inf.get("filter_target"):
+            fs_ = inf.pop("fsess", None)
+            if fs_ and 1 <= len(fs_["taps"]) <= 6:      # remember these presses for this difficulty
+                self.pos.setdefault("filter_seq", {})[fs_["D"]] = fs_["taps"]; self.save_pos()
             inf["filter_for"] = inf.pop("filter_target"); inf["need_filter"] = False
             log_line(A, f"絞り込み：難易度「{inf['filter_for']}」・報酬未受取にしました")
         inf["msg"] = f"{st}：{a['action']}（{how}）{why}"; log_line(A, inf["msg"])
