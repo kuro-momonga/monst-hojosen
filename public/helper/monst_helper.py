@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 98
+HELPER_VER = 99
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1348,7 +1348,8 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - 負けた画面・コンティニュー確認では、コンティニューせず「あきらめる」（その後の確認も、あきらめる方）。
 - 書庫ポイントが足りない・ボックスがいっぱい・スタミナが足りない、など遊べなくなった表示は stop（why に理由）。
 - オーブ・お金を使う画面、購入画面、コンティニュー、どうしても分からない画面では stop。
-- 演出中・読み込み中・通信中は wait。
+- EXTRA STAGE（エクストラステージ）は絶対に挑戦しない。出現の案内や「挑戦をあきらめますか？」の確認では、必ず「諦める」「あきらめる」「挑戦しない」の方を押す（「挑戦する」は押さない）。
+- 演出中・読み込み中は wait。「通信中」の小さな表示が出ていても、その奥にボタンのある窓があれば、それはボタン待ちなのでボタンを押してよい。
 - 上に書いていない画面でも、ソロで書庫のクエストを先に進める操作がはっきりしていれば（OK、次へ、閉じる など）それを選ぶ。戻るのは、書庫と関係ない場所に来てしまったときだけ。
 """
 SHUKA_ACT_FMT = """次の操作を1つ決めて、JSONだけで答えてください（説明文は不要）。座標はこの画像のピクセル（左上が0,0、幅{W}、高さ{H}）。
@@ -1969,6 +1970,7 @@ class ShukaAuto:
 
     def rule(self, inf, name):
         """count how many times in a row the same code rule fired; after 4 the AI gets a look instead"""
+        inf["wait_since"] = None
         if inf.get("h_last") == name: inf["h_n"] = inf.get("h_n", 0) + 1
         else: inf["h_last"], inf["h_n"] = name, 1
         return inf["h_n"] <= 4
@@ -2167,6 +2169,8 @@ class ShukaAuto:
             if sig_dist(full_sig(d2, o2, w2, h2), fs) > .03 and same < 6:
                 inf["msg"] = "画面が動いています"; return
             hist = [f"この周回でクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+            if inf.get("wait_since") and now - inf["wait_since"] > 30:
+                hist.append("※ 30秒以上「待つ」が続いている。「通信中」の表示は気にせず、画面にあるボタン（OK・閉じる・次へ・諦める など）を押すこと。wait は答えない")
             a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
             with self.sh.lock: self.sh.ai_calls += 1
             if not a:
@@ -2188,6 +2192,13 @@ class ShukaAuto:
         # never spend orbs / money, never continue
         if a["action"] in ("tap", "longpress") and any(t in why for t in ("購入", "コンティニュー", "オーブを使", "回復する")) and "あきらめ" not in why:
             return self.stop(i, A, inf, f"危ない操作をしそうになったので止めました（{why}）")
+        if a["action"] in ("tap", "longpress") and ("挑戦する" in why or ("EXTRA" in why.upper() and not any(t in why for t in ("諦", "あきら", "しない", "閉じ")))):
+            inf["hist"] = (inf["hist"] + ["EXTRA STAGEには挑戦しない。「諦める」の方を押すこと"])[-14:]
+            log_line(A, f"EXTRAに挑戦しそうだったので押しませんでした（{why}）"); time.sleep(1); return
+        if a["action"] == "wait":
+            if not inf.get("wait_since"): inf["wait_since"] = now
+        else:
+            inf["wait_since"] = None
         if st == "lose":
             if not inf.get("lost") and G:
                 f = inf.setdefault("fails", {}); f[G] = f.get(G, 0) + 1
