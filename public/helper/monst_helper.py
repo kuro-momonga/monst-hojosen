@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 78
+HELPER_VER = 79
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -652,6 +652,22 @@ def make_handler(adbs):
                     return self.reply(200, {"ok": True, "w": w, "h": h, "serial": adb.serial, "ver": HELPER_VER, "touch": adb.touch(), "rot": adb.rot, "natural": adb.natural, "sync": others})
                 if self.path.rstrip("/") == "/shuka":
                     return self.reply(200, SHUKA_PAGE.encode(), "text/html; charset=utf-8")
+                if self.path.startswith("/shuka/debug"):
+                    import html as _h
+                    out = ["<!DOCTYPE html><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>書庫 デバッグ</title>",
+                           "<body style='background:#111;color:#eee;font-family:sans-serif;margin:12px'><h2>一覧の読み取り（スクショを送ってください）</h2>"]
+                    for serial, d in AU.dbg.items():
+                        out.append(f"<h3>{_h.escape(serial)}</h3>")
+                        pk = d.get("pick")
+                        if pk:
+                            out.append(f"<p>押したグループ：{_h.escape(str(pk['group']))}（{pk['time']}）　読めた順：{_h.escape(' / '.join(pk['order']))}</p>"
+                                       f"<div style='position:relative;display:inline-block'><img src='data:image/png;base64,{pk['png']}' style='width:360px;display:block'>"
+                                       f"<div style='position:absolute;left:0;right:0;top:{pk['head']*100:.1f}%;border-top:2px solid #3cf'></div>"
+                                       f"<div style='position:absolute;left:calc({pk['x']*100:.1f}% - 9px);top:calc({pk['y']*100:.1f}% - 9px);width:14px;height:14px;border:3px solid red;border-radius:50%'></div></div>")
+                        for sn in d.get("survey", []):
+                            out.append(f"<div style='display:flex;gap:8px;align-items:center;margin:2px 0'><img src='data:image/png;base64,{sn['png']}' style='width:240px'>"
+                                       f"<span>{sn['t']}秒 → {_h.escape(' / '.join(sn['names']) or '（読めず）')}</span></div>")
+                    return self.reply(200, "".join(out).encode(), "text/html; charset=utf-8")
                 if self.path.startswith("/shuka/state"):
                     return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k in ("msg", "steps", "clears", "quest")}} for i in range(len(adbs))]})
                 if self.path.startswith("/shuka/limg"):
@@ -959,7 +975,7 @@ def _count(j):
     AI_USE["out"] += int(u.get("output_tokens", 0))
 
 
-SHUKA_GROUPS = os.path.join(HERE, "shuka_groups.json")
+SHUKA_GROUPS = os.path.join(HERE, "shuka_heads.json")      # learned headings (v79: a fresh start, older reads were unreliable)
 SHUKA_POS = os.path.join(HERE, "shuka_pos.json")      # where 出撃 is and where to swipe the deck (fractions of the screen)
 
 
@@ -1468,6 +1484,7 @@ class ShukaAuto:
         except Exception: self.log = []
         try: self.groups = json.load(open(SHUKA_GROUPS, encoding="utf-8"))
         except Exception: self.groups = []
+        self.dbg = {}
         try: self.pos = json.load(open(SHUKA_POS, encoding="utf-8"))
         except Exception: self.pos = {}
         import threading
@@ -1541,7 +1558,8 @@ class ShukaAuto:
             ya, yb = int(h * y0), int(h * y1)
             snaps.append((tt, bytes(data), off, w, h))
         th.join(5)
-        found = []; seen = set()
+        import base64
+        found = []; seen = set(); dbg = []
         for tt, data, off, w, h in snaps:
             ty = top + (bot - top) * max(0, min(1, (tt - lag) / dur))
             # the heading stuck on top (asks the AI once for a heading never seen), then the known headings
@@ -1556,7 +1574,9 @@ class ShukaAuto:
             for g in names:
                 if g and g not in seen:
                     seen.add(g); found.append((ty, g))
+            dbg.append({"t": round(tt, 2), "names": [g for g in names if g], "png": base64.b64encode(png_crop(data, off, w, h, *HEAD_BOX, step=2)).decode()})
         self.span = (top, bot)
+        self.dbg.setdefault(A.serial, {})["survey"] = dbg
         return found
 
     def heading_in_list(self, data, off, w, h, name):
@@ -1635,6 +1655,9 @@ class ShukaAuto:
         data, off, w, h = A.raw_frame()
         col, row = n % 5, n // 5
         iy = y + w * (.146 + .18 * row); ix = w * (.13 + .181 * col)
+        import base64
+        self.dbg.setdefault(A.serial, {})["pick"] = {"png": base64.b64encode(png_small(data, off, w, h, 3)).decode(), "x": ix / w, "y": iy / h,
+                                                     "head": y / h, "group": G, "order": order, "time": time.strftime("%H:%M:%S")}
         time.sleep(random.uniform(.5, 1.8))
         A.tap(ix + random.uniform(-.025, .025) * w, iy + random.uniform(-.025, .025) * w, random.random())
         inf["pick"] = {"group": G, "ty": ty, "order": order, "span": span}; inf["steps"] += 1; inf["from_list"] = True
@@ -1946,7 +1969,7 @@ main{display:flex;gap:16px;flex-wrap:wrap;padding:16px}.c{background:#171a21;bor
 .c img{width:100%;border-radius:8px;background:#000;min-height:200px}.st{font-size:22px;font-weight:800;color:#ffcf3f}
 </style></head><body><header><h1>書庫周回</h1>
 <button id="run">判定を始める</button><span id="info" class="small"></span><span style="flex:1"></span>
-<span id="keybox" class="small"></span></header><main id="m"></main>
+<a href="/shuka/debug" target="_blank" class="small" style="color:#8bd">一覧の読み取りを見る</a><span id="keybox" class="small"></span></header><main id="m"></main>
 <h2 style="font-size:15px;margin:8px 16px" id="lh"></h2><div id="LG" style="margin:0 16px;font-size:13px;line-height:1.8;max-height:260px;overflow:auto;background:#171a21;border:1px solid #2a2f3a;border-radius:10px;padding:8px 12px"></div>
 <h2 style="font-size:15px;margin:8px 16px">覚えた画面（違っていたら直す・消す）</h2><main id="L"></main><script>
 let S=null;const $=id=>document.getElementById(id);
