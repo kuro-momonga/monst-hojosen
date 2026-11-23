@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 91
+HELPER_VER = 92
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1741,11 +1741,12 @@ class ShukaAuto:
         return (.18, y - .018, .72, y + .018) if y else None
 
     def on_deck(self, data, off, w, h, sig=None):
-        """deck select, from what was learned there (the 出撃 button position and the screen's look) or the built-in check"""
+        """deck select: the teal 出撃 button where it was found the first time (the top of this screen shows the quest
+        name, so it looks different for every quest: only the button is compared)"""
         g = self.pos.get("go")
-        if g and _frac(data, off, w, h, (g[0] - .05, g[1] - .012, g[0] + .05, g[1] + .012), _TEAL) > .4 and not is_home(data, off, w, h):
-            ds = self.pos.get("deck_sig")
-            if ds and sig_dist(sig or screen_sig(data, off, w, h), ds) < .06: return True
+        if g and _frac(data, off, w, h, (g[0] - .06, g[1] - .012, g[0] + .06, g[1] + .012), _TEAL) > .45:
+            if not is_home(data, off, w, h) and not is_play_type(data, off, w, h) and not quest_bands(data, off, w, h) and not _search_bar(data, off, w, h):
+                return True
         return is_deck_select(data, off, w, h)
 
     def deck_now(self, A, data, off, w, h):
@@ -1760,9 +1761,13 @@ class ShukaAuto:
             ok = sorted(best.items(), key=lambda kv: kv[1])
             if ok and ok[0][1] < .04 and (len(ok) == 1 or ok[1][1] - ok[0][1] > .03) and len(best) >= 2:
                 return ok[0][0]
-        r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
-        with self.sh.lock: self.sh.ai_calls += 1
-        if not r: return None
+        r = None
+        for _ in range(2):
+            r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
+            with self.sh.lock: self.sh.ai_calls += 1
+            if r: break
+        if not r:
+            log_line(A, "デッキ名を読めませんでした（AIの返事が読めない）"); return None
         try:
             ny = float(r["name_y"]) * 2 / h
             if abs(ny - (self.pos.get("deck_y") or ny)) > .015: decks.clear()        # the name is elsewhere: old looks are useless
