@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 83
+HELPER_VER = 84
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1083,9 +1083,11 @@ def ask_claude_deck(png, W, H):
     import base64, urllib.request, re as _re
     key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
     if not key: return None
-    txt = (f"モンストのデッキ選択画面です（幅{W}、高さ{H}のピクセル座標）。表示中のデッキの名前を読んで、"
-           "「書庫周回」なら normal、「書庫★5制限」（書庫☆5制限なども同じ）なら star5、それ以外の名前なら other。"
-           '出撃ボタンの中心と、デッキ名が書いてある帯の中心の y も答えてください。JSONだけで: {"deck":"normal","name":"読んだデッキ名","go":[x,y],"name_y":y}')
+    txt = (f"モンストのデッキ選択画面です（幅{W}、高さ{H}のピクセル座標）。"
+           "画面の上のほうにある大きな帯の文字はクエスト名です。デッキ名ではありません。"
+           "デッキ名は、自分のキャラ（モンスター）が横に並んだ枠のすぐ上か枠の上の端に、小さめの文字で書いてあります（例：「書庫周回」「書庫★5制限」）。"
+           "まずクエスト名を quest に、次にデッキ名を name に書き、デッキ名が「書庫周回」なら deck を normal、「書庫★5制限」（☆や５でも同じ）なら star5、それ以外は other。"
+           '出撃ボタンの中心と、デッキ名の文字の中心の y も答えてください。JSONだけで: {"quest":"クエスト名","name":"デッキ名","deck":"normal","go":[x,y],"name_y":y}')
     body = {"model": SHUKA_MODEL, "max_tokens": 400, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
         {"type": "text", "text": txt}]}]}
@@ -1745,7 +1747,14 @@ class ShukaAuto:
             self.pos["deck_y"] = ny
             self.pos["deck_sig"] = [round(v, 1) for v in screen_sig(data, off, w, h)]
         except Exception: return None
-        kind = r.get("deck"); log_line(A, f"デッキ名を読みました →「{r.get('name')}」（{kind}）")
+        kind = r.get("deck")
+        if r.get("quest") and r.get("name") and norm_group(r["quest"]) == norm_group(r["name"]):
+            kind = None                                         # read the quest name again: not a deck name
+        nm = norm_group(r.get("name") or "")
+        if "書庫" in nm and ("★" in nm or "制限" in nm): kind = "star5"
+        elif "書庫" in nm and "周回" in nm: kind = "normal"
+        log_line(A, f"デッキ名を読みました →「{r.get('name')}」（{kind}）　クエスト名「{r.get('quest', '')}」")
+        if kind is None: return None
         if kind in ("normal", "star5"):
             decks.append([kind, [round(v, 3) for v in deck_bits(data, off, w, h, self.deck_box())]]); del decks[:-12]
         self.save_pos()
