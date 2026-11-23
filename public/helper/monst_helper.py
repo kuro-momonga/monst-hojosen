@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 115
+HELPER_VER = 116
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2105,7 +2105,12 @@ class ShukaAuto:
         if inf.get("force_look"):
             pass
         elif is_loading(data, off, w, h):
-            inf["msg"] = "読み込み中"; time.sleep(random.uniform(.8, 1.6)); return
+            # a dark screen with one window and one orange button (日付が変わりました。OK) is not loading:
+            # after two looks in a row, let the lone-orange-button rule below press it
+            inf["ld_btn"] = inf.get("ld_btn", 0) + 1 if len(orange_buttons(data, off, w, h)) == 1 else 0
+            if inf["ld_btn"] < 2:
+                inf["msg"] = "読み込み中"; time.sleep(random.uniform(.8, 1.6)); return
+            inf["ld_btn"] = 0
         # ---- stuck on one screen? ----
         sig = screen_sig(data, off, w, h)
         inf["same"] = inf["same"] + 1 if inf["last_sig"] and sig_dist(sig, inf["last_sig"]) < .02 else 0
