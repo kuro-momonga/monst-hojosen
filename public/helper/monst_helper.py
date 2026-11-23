@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 77
+HELPER_VER = 78
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1531,7 +1531,7 @@ class ShukaAuto:
         x, y, top, bot = t
         if y - top > 15:
             self.drag_to(A, top, quick=True)
-        dur = random.uniform(3.4, 4.4); lag = .12
+        dur = random.uniform(4.5, 5.5); lag = .12
         th = threading.Thread(target=lambda: A.run("shell", "input", "swipe", *map(str, (x + random.randint(-2, 2), round(top), x + random.randint(-3, 3), round(bot), round(dur * 1000))), timeout=20), daemon=True)
         t0 = time.time(); th.start(); snaps = []
         x0, y0, x1, y1 = HEAD_BOX
@@ -1539,15 +1539,23 @@ class ShukaAuto:
             tt = time.time() - t0
             data, off, w, h = A.raw_frame()
             ya, yb = int(h * y0), int(h * y1)
-            snaps.append((tt, head_bits(data, off, w, h), bytes(data[off + ya * w * 4: off + yb * w * 4]), w, h, ya))
+            snaps.append((tt, bytes(data), off, w, h))
         th.join(5)
-        found = []
-        for tt, bits, rows, w, h, ya in snaps:
-            crop = lambda rows=rows, w=w, h=h, ya=ya: png_crop(b"\0" * (ya * w * 4) + rows + b"\0" * ((h - ya) * w * 4 - len(rows)), 0, w, h, *HEAD_BOX)
-            g = self.name_of(bits, crop)
-            if not g: continue
+        found = []; seen = set()
+        for tt, data, off, w, h in snaps:
             ty = top + (bot - top) * max(0, min(1, (tt - lag) / dur))
-            if not found or found[-1][1] != g: found.append((ty, g))
+            # the heading stuck on top (asks the AI once for a heading never seen), then the known headings
+            # scrolling inside the list in the same frame: small groups that pass between two frames are not missed
+            names = [self.name_of(head_bits(data, off, w, h), lambda data=data, off=off, w=w, h=h: png_crop(data, off, w, h, *HEAD_BOX))]
+            if self.groups:
+                for yy in range(int(h * .47), int(h * .82), 8):
+                    b = head_bits(data, off, w, h, yy / h)
+                    if sum(b) < .2: continue
+                    G = min(self.groups, key=lambda G: bits_dist(b, G["bits"]))
+                    if bits_dist(b, G["bits"]) < .045 and G["name"] not in names: names.append(G["name"])
+            for g in names:
+                if g and g not in seen:
+                    seen.add(g); found.append((ty, g))
         self.span = (top, bot)
         return found
 
@@ -1619,7 +1627,7 @@ class ShukaAuto:
             if not G:
                 self.run[i] = False; inf["msg"] = "止めました：書庫で回すクエストが残っていません（残り：" + "・".join(order) + "）"
                 log_line(A, inf["msg"]); return True
-            span = self.span[1] - self.span[0]; n = inf["skip"].get(G, 0)
+            span = self.span[1] - self.span[0]; n = inf.setdefault("skip", {}).get(G, 0)
             ty = next(t for t, g in found if g == G) - span * random.uniform(.01, .02)
             ty, y = self.align(A, G, order, ty, span, n // 5)
         if y is None:
