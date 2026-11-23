@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 100
+HELPER_VER = 101
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1111,7 +1111,7 @@ def ask_claude_deck(png, W, H):
            "デッキ名は、自分のキャラ（モンスター）が横に並んだ枠のすぐ上か枠の上の端に、小さめの文字で書いてあります（例：「書庫周回」「書庫★5制限」）。"
            "まずクエスト名を quest に、次にデッキ名を name に書き、デッキ名が「書庫周回」なら deck を normal、「書庫★5制限」（☆や５でも同じ）なら star5、それ以外は other。"
            '出撃ボタンの中心と、デッキ名の文字の中心の y も答えてください。JSONだけで: {"quest":"クエスト名","name":"デッキ名","deck":"normal","go":[x,y],"name_y":y}')
-    body = {"model": SHUKA_MODEL, "max_tokens": 400, "messages": [{"role": "user", "content": [
+    body = {"model": SHUKA_MODEL, "max_tokens": 600, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
         {"type": "text", "text": txt}]}]}
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
@@ -1120,7 +1120,18 @@ def ask_claude_deck(png, W, H):
         with urllib.request.urlopen(req, timeout=40) as r:
             j = json.loads(r.read()); _count(j)
         t = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
-        return json.loads(_re.search(r"\{.*\}", t, _re.S).group(0))
+        for m in reversed(list(_re.finditer(r"\{[^{}]*\}", t))):       # the last flat {...} in the answer
+            try: return json.loads(m.group(0))
+            except Exception: continue
+        d = {}
+        for k in ("quest", "name", "deck"):                              # or pick the fields one by one
+            m = _re.search(k + r'"?\s*[:：]\s*"([^"]*)"', t)
+            if m: d[k] = m.group(1)
+        m = _re.search(r'go"?\s*[:：]\s*\[\s*([\d.]+)\s*,\s*([\d.]+)', t); n = _re.search(r'name_y"?\s*[:：]\s*([\d.]+)', t)
+        if m and n and d.get("name"):
+            d["go"] = [float(m.group(1)), float(m.group(2))]; d["name_y"] = float(n.group(1)); return d
+        print("（デッキの読み取り：AIの返事）", t[:120].replace("\n", " "))
+        return None
     except Exception:
         return None
 
@@ -1835,15 +1846,15 @@ class ShukaAuto:
                 return ok[0][0]
         r = None
         for _ in range(2):
-            r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
+            r = ask_claude_deck(png_small(data, off, w, h, 3), w // 3, h // 3)
             with self.sh.lock: self.sh.ai_calls += 1
             if r: break
         if not r:
             log_line(A, "デッキ名を読めませんでした（AIの返事が読めない）"); return None
         try:
-            ny = float(r["name_y"]) * 2 / h
+            ny = float(r["name_y"]) * 3 / h
             if abs(ny - (self.pos.get("deck_y") or ny)) > .015: decks.clear()        # the name is elsewhere: old looks are useless
-            self.pos["go"] = [float(r["go"][0]) * 2 / w, float(r["go"][1]) * 2 / h]
+            self.pos["go"] = [float(r["go"][0]) * 3 / w, float(r["go"][1]) * 3 / h]
             self.pos["deck_y"] = ny
             self.pos["deck_sig"] = [round(v, 1) for v in screen_sig(data, off, w, h)]
         except Exception: return None
@@ -1877,7 +1888,7 @@ class ShukaAuto:
                 A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
                 inf["msg"] = f"デッキ：{name}で出撃"; log_line(A, inf["msg"])
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
-                inf["deck"] = want; time.sleep(random.uniform(1.5, 2.5)); return True
+                inf["deck"] = want; inf["battle_t"] = time.time(); time.sleep(random.uniform(1.5, 2.5)); return True
             if cur in ("normal", "star5"):
                 go_right = cur == "normal"            # 周回 -> ★5 is to the right; ★5 -> 周回 is to the left
             elif prev in ("normal", "star5"):
@@ -2083,7 +2094,7 @@ class ShukaAuto:
                         left = cnt > 0
                         log_line(A, f"「{D}」の見出しの件数：{cnt}")
                     else:
-                        left = ask_claude_any_quest(png_small(data, off, w, h, 2), D)
+                        left = ask_claude_any_quest(png_small(data, off, w, h, 3), D)
                         with self.sh.lock: self.sh.ai_calls += 1
                     if left is not False:
                         log_line(A, f"AIの確認：「{D}」のクエストがまだ一覧にある（または確認できない）ので続けます")
@@ -2175,13 +2186,13 @@ class ShukaAuto:
             hist = [f"この周回でクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
             if inf.get("wait_since") and now - inf["wait_since"] > 30:
                 hist.append("※ 30秒以上「待つ」が続いている。「通信中」の表示は気にせず、画面にあるボタン（OK・閉じる・次へ・諦める など）を押すこと。wait は答えない")
-            a, err = ask_claude_action(png_small(data, off, w, h, 2), w // 2, h // 2, hist)
+            a, err = ask_claude_action(png_small(data, off, w, h, 3), w // 3, h // 3, hist)
             with self.sh.lock: self.sh.ai_calls += 1
             if not a:
                 inf["msg"] = "AI：" + err; time.sleep(8); return
             how = "AI"
-            for x in ("x", "y", "x2", "y2"):     # AI coordinates are on the half-size image
-                if a.get(x) is not None: a[x] = float(a[x]) * 2
+            for x in ("x", "y", "x2", "y2"):     # AI coordinates are on the third-size image
+                if a.get(x) is not None: a[x] = float(a[x]) * 3
             if a.get("fixed") and a["action"] in ("tap", "longpress") and a.get("state") not in ("home", "shuka_list", "quest_detail", "play_type", "deck_select", "filter", "battle", "loading", "other"):
                 with self.sh.lock:
                     self.sh.add(a.get("state", "other"), a.get("why", ""), sig, png_small(data, off, w, h, 6))
@@ -2210,7 +2221,7 @@ class ShukaAuto:
                     f[G] = 0; inf.setdefault("skip", {})[G] = inf["skip"].get(G, 0) + 1
                     log_line(A, f"「{G}」のこのクエストは2回負けたので、次からは隣のクエストにします")
             inf["lost"] = True
-        if st == "battle": inf["battle_t"] = now
+        if st == "battle" or "出撃" in why: inf["battle_t"] = now
         if a.get("quest"): inf["quest"] = str(a["quest"])[:40]
         if st == "shuka_list" and a["action"] == "tap" and float(a.get("x") or 0) > w * .875 and float(a.get("y") or 0) < h * .2:
             # the round 一覧 button right of 表示順変更 opens another window: press 表示順変更 instead
