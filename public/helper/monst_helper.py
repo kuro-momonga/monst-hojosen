@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 89
+HELPER_VER = 90
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1948,10 +1948,6 @@ class ShukaAuto:
             D = DIFFS[di]
             if same < 4 and self.rule(inf, "list"):
                 f = first_icon(data, off, w, h)
-                top_name = None
-                if f:     # the heading right above the first icon says which difficulty the list shows
-                    yc = f[0] / h - .022
-                    top_name = self.name_of(head_bits(data, off, w, h, yc), lambda: png_crop(data, off, w, h, 0, yc - .05, .55, yc + .05))
                 if inf.get("filter_for") != D:
                     tries = inf.setdefault("filter_try", {}); tries[D] = tries.get(D, 0) + 1
                     if tries[D] > 4:
@@ -1966,8 +1962,6 @@ class ShukaAuto:
                     inf["diff"] = di + 1; inf["filter_for"] = None
                     log_line(A, f"「{D}」は全部終わりました → 次は「{DIFFS[di + 1] if di + 1 < len(DIFFS) else 'なし'}」")
                     return
-                if top_name and canon(top_name) != GROUP_KEYS[di]:      # not this difficulty (the filter was reset or set wrong)
-                    log_line(A, f"一覧の一番上が「{top_name}」なので、絞り込みをやり直します"); inf["filter_for"] = None; return
                 n = inf.setdefault("skip", {}).get(D, 0)        # quests lost twice are skipped: the next one to the right
                 pause(.6, 1.8)
                 A.tap(w * (.13 + .181 * (n % 5)) + random.uniform(-.03, .03) * w, f[1] + w * .18 * (n // 5) + random.uniform(-.03, .03) * w, random.random())
