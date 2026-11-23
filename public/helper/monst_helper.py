@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 105
+HELPER_VER = 106
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -942,6 +942,30 @@ def deck_bits(data, off, w, h, box=None):
                     if min(data[i], data[i + 1], data[i + 2]) > 170: n += 1
             out.append(n / max(1, t))
     return out
+
+
+def orange_buttons(data, off, w, h):
+    """orange buttons (OK / 諦める / 挑戦する ...) on screen: [(cx, cy)] in pixels, left to right then top to bottom"""
+    st = 6; cells = set()
+    for y in range(int(h * .25), int(h * .92), st):
+        o = off + y * w * 4
+        for x in range(0, w, st):
+            i = o + x * 4; r, g, b = data[i], data[i + 1], data[i + 2]
+            if r > 200 and 90 < g < 185 and b < 70: cells.add((x // st, y // st))
+    seen = set(); out = []
+    for c in cells:
+        if c in seen: continue
+        stack = [c]; seen.add(c); pts = []
+        while stack:
+            p = stack.pop(); pts.append(p)
+            for d in ((1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2)):
+                q = (p[0] + d[0], p[1] + d[1])
+                if q in cells and q not in seen: seen.add(q); stack.append(q)
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        bw, bh = (max(xs) - min(xs) + 1) * st, (max(ys) - min(ys) + 1) * st
+        if w * .16 < bw < w * .6 and h * .022 < bh < h * .08 and len(pts) * st * st > bw * bh * .35:
+            out.append(((min(xs) + max(xs) + 1) * st / 2, (min(ys) + max(ys) + 1) * st / 2))
+    return sorted(out, key=lambda p: (round(p[1] / (h * .05)), p[0]))
 
 
 def list_sig(data, off, w, h):
@@ -2199,6 +2223,13 @@ class ShukaAuto:
             L = None
         if L:
             a = dict(L["act"]); how = "覚えた操作"
+            wy = a.get("why") or ""
+            if a.get("action") == "tap" and ("ヒント" in wy or "EXTRA" in wy.upper() or "諦め" in wy):
+                btn = orange_buttons(data, off, w, h)
+                if btn:
+                    # EXTRA: the left one is 諦める (挑戦する is on the right); the hint has one OK
+                    bx, by = min(btn, key=lambda p: p[0]) if ("EXTRA" in wy.upper() or "諦め" in wy) else btn[-1]
+                    a.update(x=bx, y=by, v=2); how = "覚えた操作・ボタン位置を見て"
             if a.get("v") != 2:                  # learned before v76: coordinates on the half-size image
                 for x in ("x", "y", "x2", "y2"):
                     if a.get(x) is not None: a[x] = float(a[x]) * 2
