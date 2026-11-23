@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 80
+HELPER_VER = 81
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1274,7 +1274,7 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 ルール：
 - ホーム画面：書庫のクエストをまだ1つも遊んでいなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップ。上の「SHORT CUT」や長押しは使わない。
 - クエスト一覧（ノーマル・イベントなどのアイコンが並ぶ）では「追憶の書庫」を押す。
-- 書庫の一覧（「モンスター名で検索」のバーがある）：プログラムがクエストを選ぶので wait。ただし流れの最後のほうに「絞り込みが必要」とあれば、右上の緑の「表示順変更」を押す。
+- 書庫の一覧（「モンスター名で検索」のバーがある）：プログラムがクエストを選ぶので wait。ただし流れの最後のほうに「絞り込みが必要」とあれば、右上の緑の横長ボタン「表示順変更」を押す。そのさらに右の丸い「一覧」ボタンは別の窓が出るので絶対に押さない（間違って開いたら閉じる）。
 - 絞り込み・並び替えの窓（state は filter）：上の「絞り込み」タブで、「難易度」の欄を押して流れで指定された難易度（極・★5以下制限・究極・激究極のどれか）を選び、「初クリア報酬」を「報酬未受取」にする。両方そうなっていれば緑の「決定」を押す（why に「決定」と書く）。開いた選択肢の一覧では、指定のものを1つ押す。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上のキャラを押す（fixed は true）。
 - デッキ選択でデッキ名が「書庫周回」「書庫★5制限」のどちらでもなければ、デッキ欄を横にスワイプして探す（★5制限は書庫周回の右隣）。
@@ -1993,6 +1993,9 @@ class ShukaAuto:
             inf["lost"] = True
         if st == "battle": inf["battle_t"] = now
         if a.get("quest"): inf["quest"] = str(a["quest"])[:40]
+        if st == "shuka_list" and a["action"] == "tap" and float(a.get("x") or 0) > w * .875 and float(a.get("y") or 0) < h * .2:
+            # the round 一覧 button right of 表示順変更 opens another window: press 表示順変更 instead
+            a["x"], a["y"] = w * random.uniform(.68, .84), h * random.uniform(.125, .145); why += "（一覧ボタンではなく表示順変更）"
         if st == "filter" and "決定" in why and inf.get("filter_target"):
             inf["filter_for"] = inf.pop("filter_target"); inf["need_filter"] = False
             log_line(A, f"絞り込み：難易度「{inf['filter_for']}」・報酬未受取にしました")
