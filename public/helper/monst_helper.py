@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 107
+HELPER_VER = 108
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -740,7 +740,7 @@ def make_handler(adbs):
                     return self.reply(200, SH.status())
                 if self.path.startswith("/shuka/auto"):
                     i = int(q.get("i", 0)); AU.run[i] = bool(q.get("on")); SH.on = SH.on or AU.run[i]
-                    if AU.run[i]: AU.info[i].update(diff=0, filter_for=None, filter_try={}, h_last=None, same=0, deck=None, deck_for=None)     # every start: from 極 again
+                    if AU.run[i]: AU.info[i].update(ai_n=0, diff=0, filter_for=None, filter_try={}, h_last=None, same=0, deck=None, deck_for=None)     # every start: from 極 again
                     AU.info[i]["msg"] = "動いています" if AU.run[i] else "停止中"
                     print(f"書庫自動 {adbs[i].serial}: " + ("開始" if AU.run[i] else "停止"))
                     return self.reply(200, {"ok": True})
@@ -2049,6 +2049,7 @@ class ShukaAuto:
         # ---- home ----
         if is_home(data, off, w, h) and same < 4 and self.rule(inf, "home"):
             if inf.get("in_quest"):          # back home after a quest: it was a clear unless we gave up
+                inf["ai_n"] = 0
                 if not inf.get("lost"):
                     inf["clears"] += 1
                     if G: inf.setdefault("fails", {})[G] = 0
@@ -2246,6 +2247,11 @@ class ShukaAuto:
             hist = [f"この周回でクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
             if inf.get("wait_since") and now - inf["wait_since"] > 30:
                 hist.append("※ 30秒以上「待つ」が続いている。「通信中」の表示は気にせず、画面にあるボタン（OK・閉じる・次へ・諦める など）を押すこと。wait は答えない")
+            # safety: the AI is for the odd screen. Leaning on it again and again means the code lost its way:
+            # stop instead of letting the AI drive (10 calls without a clear in between)
+            inf["ai_n"] = inf.get("ai_n", 0) + 1
+            if inf["ai_n"] > 10:
+                return self.stop(i, A, inf, "クリアの間にAIへ10回以上聞いたので、安全のため止めました（ログを見せてください）")
             a, err = ask_claude_action(png_small(data, off, w, h, 3), w // 3, h // 3, hist)
             with self.sh.lock: self.sh.ai_calls += 1
             if not a:
