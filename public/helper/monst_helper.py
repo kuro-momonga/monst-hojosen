@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 81
+HELPER_VER = 82
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -924,8 +924,8 @@ def has_clear_tag(data, off, w, h):
 DECK_BOX = (.28, .43, .56, .47)      # deck name above the characters on the deck select screen
 
 
-def deck_bits(data, off, w, h):
-    x0, y0, x1, y1 = DECK_BOX; out = []
+def deck_bits(data, off, w, h, box=None):
+    x0, y0, x1, y1 = box or DECK_BOX; out = []
     for gy in range(4):
         ya = int(h * (y0 + (y1 - y0) * gy / 4)); yb = int(h * (y0 + (y1 - y0) * (gy + 1) / 4))
         for gx in range(24):
@@ -1277,7 +1277,7 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 - 書庫の一覧（「モンスター名で検索」のバーがある）：プログラムがクエストを選ぶので wait。ただし流れの最後のほうに「絞り込みが必要」とあれば、右上の緑の横長ボタン「表示順変更」を押す。そのさらに右の丸い「一覧」ボタンは別の窓が出るので絶対に押さない（間違って開いたら閉じる）。
 - 絞り込み・並び替えの窓（state は filter）：上の「絞り込み」タブで、「難易度」の欄を押して流れで指定された難易度（極・★5以下制限・究極・激究極のどれか）を選び、「初クリア報酬」を「報酬未受取」にする。両方そうなっていれば緑の「決定」を押す（why に「決定」と書く）。開いた選択肢の一覧では、指定のものを1つ押す。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上のキャラを押す（fixed は true）。
-- デッキ選択でデッキ名が「書庫周回」「書庫★5制限」のどちらでもなければ、デッキ欄を横にスワイプして探す（★5制限は書庫周回の右隣）。
+- デッキ選択でデッキ名が流れで指定されたもの（「書庫周回」か「書庫★5制限」）でなければ、デッキ欄を左にスワイプ（指を右から左へ）。この2つは左スワイプで交互に切り替わる。
 - リザルト・スペシャル報酬・ステージクリア・モンスター獲得・ランクアップ・レベルアップ・ラック・ログインボーナス・日付が変わりましたなどは、画面を押すか「OK」「閉じる」「次へ」で進める。
 - お知らせ・イベント告知・キャンペーンの窓は「閉じる」や右上の「×」で閉じる。
 - 通信エラーは「リトライ」「再試行」「OK」。タイトル画面は画面を押して始める。
@@ -1711,14 +1711,41 @@ class ShukaAuto:
         try: json.dump(self.pos, open(SHUKA_POS, "w", encoding="utf-8"))
         except Exception: pass
 
+    def deck_box(self):
+        y = self.pos.get("deck_y")
+        return (.18, y - .018, .72, y + .018) if y else None
+
+    def on_deck(self, data, off, w, h, sig=None):
+        """deck select, from what was learned there (the 出撃 button position and the screen's look) or the built-in check"""
+        g = self.pos.get("go")
+        if g and _frac(data, off, w, h, (g[0] - .05, g[1] - .012, g[0] + .05, g[1] + .012), _TEAL) > .4 and not is_home(data, off, w, h):
+            ds = self.pos.get("deck_sig")
+            if ds and sig_dist(sig or screen_sig(data, off, w, h), ds) < .06: return True
+        return is_deck_select(data, off, w, h)
+
     def deck_now(self, A, data, off, w, h):
-        """which deck is shown: learned looks of this account's deck name, else the AI reads the name crop once"""
+        """which deck is shown. The first time the AI looks at the whole screen once (deck name, where it is, where 出撃 is);
+        after that the deck name's look is matched (per account), and only a never-seen name is read again (small crop)."""
         decks = self.pos.setdefault("decknames", {}).setdefault(A.serial, [])     # [[kind, bits]]
-        bits = deck_bits(data, off, w, h)
+        if not self.deck_box():
+            r = ask_claude_deck(png_small(data, off, w, h, 2), w // 2, h // 2)
+            with self.sh.lock: self.sh.ai_calls += 1
+            if not r: return None
+            try:
+                self.pos["go"] = [float(r["go"][0]) * 2 / w, float(r["go"][1]) * 2 / h]
+                self.pos["deck_y"] = float(r["name_y"]) * 2 / h
+                self.pos["deck_sig"] = [round(v, 1) for v in screen_sig(data, off, w, h)]
+            except Exception: return None
+            decks.clear()
+            kind = r.get("deck"); log_line(A, f"デッキ名を読みました →「{r.get('name')}」（{kind}）")
+            decks.append([kind, [round(v, 3) for v in deck_bits(data, off, w, h, self.deck_box())]]); self.save_pos()
+            return kind
+        bits = deck_bits(data, off, w, h, self.deck_box())
         best = min(decks, key=lambda d: bits_dist(bits, d[1]), default=None)
         if best and bits_dist(bits, best[1]) < .05:
             return best[0]
-        kind, txt = ask_claude_deckname(png_crop(data, off, w, h, DECK_BOX[0] - .06, DECK_BOX[1] - .01, DECK_BOX[2] + .06, DECK_BOX[3] + .01))
+        x0, y0, x1, y1 = self.deck_box()
+        kind, txt = ask_claude_deckname(png_crop(data, off, w, h, x0, y0 - .01, x1, y1 + .01))
         with self.sh.lock: self.sh.ai_calls += 1
         if not kind: return None
         log_line(A, f"デッキ名を読みました →「{txt}」（{kind}）")
@@ -1726,30 +1753,26 @@ class ShukaAuto:
         return kind
 
     def deck(self, A, i, inf, want):
-        """deck select: make sure the shown deck is 書庫周回 / 書庫★5制限 as needed (★5 is the next one to the right), then 出撃"""
+        """deck select: make sure the shown deck is 書庫周回 / 書庫★5制限 as needed, then 出撃.
+        The two decks sit next to each other: one swipe to the left (finger right -> left) switches between them."""
         name = "書庫★5制限" if want == "star5" else "書庫周回"
-        tried = 0; last_move = None
-        for _ in range(6):
+        for k in range(6):
             data, off, w, h = A.raw_frame()
-            if not is_deck_select(data, off, w, h): return True       # the screen moved on
+            if k and not self.on_deck(data, off, w, h): return True       # the screen moved on
             cur = self.deck_now(A, data, off, w, h)
+            if cur is None: return False
             if cur == want:
+                gx, gy = self.pos.get("go") or (.49, .825)
                 pause(.5, 1.6)
-                A.tap(w * random.uniform(.43, .56), h * random.uniform(.812, .838), random.random())
+                A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
                 inf["msg"] = f"デッキ：{name}で出撃"; log_line(A, inf["msg"])
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
                 inf["deck"] = want; time.sleep(random.uniform(1.5, 2.5)); return True
-            if cur not in ("normal", "star5") and tried >= 3:
-                return False                                  # an unknown deck and swiping did not find ours: let the AI look
-            # 書庫周回 -> ★5 is one to the right (swipe the finger to the left); back is the other way. Unknown: try right first.
-            if cur in ("normal", "star5"): right = want == "star5"
-            else: right = (not last_move) if last_move is not None else True     # overshot onto another deck: go back
-            last_move = right
-            x0 = w * random.uniform(.46, .54); d = w * random.uniform(.36, .44) * (-1 if right else 1); yy = h * random.uniform(.51, .56)
+            yy = h * (self.pos.get("deck_y", .45) + random.uniform(.03, .07))
+            x0 = w * random.uniform(.66, .74); x1 = x0 - w * random.uniform(.36, .44)
             pause(.4, 1.2)
-            A.run("shell", "input", "swipe", *map(str, (round(x0 - d / 2), round(yy), round(x0 + d / 2), round(yy + random.uniform(-8, 8)), round(random.uniform(280, 480)))), timeout=15)
-            tried += 1; log_line(A, f"デッキを切り替え（{'右' if right else '左'}へ）")
-            time.sleep(random.uniform(1.1, 1.8))
+            A.run("shell", "input", "swipe", *map(str, (round(x0), round(yy), round(x1), round(yy + random.uniform(-8, 8)), round(random.uniform(280, 480)))), timeout=15)
+            log_line(A, f"デッキを左へスワイプ（{name}にする）"); time.sleep(random.uniform(1.1, 1.8))
         return False
 
     def act(self, A, a, k, seed):
@@ -1909,7 +1932,7 @@ class ShukaAuto:
             inf["_pickfail"] = False
 
         # ---- deck select ----
-        if is_deck_select(data, off, w, h) and same < 3 and self.rule(inf, "deck"):
+        if self.on_deck(data, off, w, h, sig) and same < 3 and self.rule(inf, "deck"):
             if self.deck(A, i, inf, want): return
             inf["hist"] = (inf["hist"] + [f"デッキを{'書庫★5制限' if want == 'star5' else '書庫周回'}にしたいが、プログラムでは見つからなかった"])[-14:]
 
@@ -1981,6 +2004,11 @@ class ShukaAuto:
                     self.sh.learn[-1]["act"] = dict({x: a.get(x) for x in ("action", "x", "y", "x2", "y2", "state", "why")}, full=[round(v, 1) for v in fs], v=2)
                     self.sh.save()
         st = a.get("state", "?"); why = a.get("why", ""); inf["h_last"] = None
+        if st == "deck_select" and how == "AI" and not inf.get("_deckai"):
+            # the AI says this is the deck select screen: let the code read the deck (and learn where things are) once
+            inf["_deckai"] = True
+            if self.deck(A, i, inf, want): inf["_deckai"] = False; return
+        elif st != "deck_select": inf["_deckai"] = False
         # never spend orbs / money, never continue
         if a["action"] in ("tap", "longpress") and any(t in why for t in ("購入", "コンティニュー", "オーブを使", "回復する")) and "あきらめ" not in why:
             return self.stop(i, A, inf, f"危ない操作をしそうになったので止めました（{why}）")
