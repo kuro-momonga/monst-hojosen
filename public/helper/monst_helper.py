@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 106
+HELPER_VER = 107
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2171,8 +2171,10 @@ class ShukaAuto:
 
         # ---- quest page (difficulty bands) ----
         else:
-            # a quest page has the 書庫 header (pt bar) on top: battle screens with teal bits are not quest pages
-            bands = [] if is_shuka_list(data, off, w, h) or not shuka_header(data, off, w, h) else quest_bands(data, off, w, h)
+            # a quest page: two or more difficulty bands (or one band under the 書庫 header). A lone teal patch on
+            # a battle screen is not one.
+            bands = [] if is_shuka_list(data, off, w, h) else quest_bands(data, off, w, h)
+            if len(bands) == 1 and not shuka_header(data, off, w, h): bands = []
             if bands and same < 3 and self.rule(inf, "quest"):
                 if inf.get("after_lp"):          # reached by the long press from home: back to the list
                     inf["after_lp"] = False; pause(.6, 1.8); tap_back(A, w, h)
