@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 116
+HELPER_VER = 117
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1954,7 +1954,7 @@ class ShukaAuto:
             gx, gy = self.pos.get("go") or (.49, .825)
             pause(.5, 1.6)
             A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
-            inf["msg"] = f"デッキ：{name}のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
+            inf["sortie_t"] = time.time(); inf["msg"] = f"デッキ：{name}のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
             inf["battle_t"] = time.time(); time.sleep(random.uniform(1.5, 2.5)); return True
         go_right = None; prev = None
         for k in range(5):
@@ -1966,7 +1966,7 @@ class ShukaAuto:
                 gx, gy = self.pos.get("go") or (.49, .825)
                 pause(.5, 1.6)
                 A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
-                inf["msg"] = f"デッキ：{name}で出撃"; log_line(A, inf["msg"])
+                inf["sortie_t"] = time.time(); inf["msg"] = f"デッキ：{name}で出撃"; log_line(A, inf["msg"])
                 inf["steps"] += 1; inf["hist"] = (inf["hist"] + [f"デッキ{name}で出撃した"])[-14:]
                 inf["deck"] = want; inf["deck_for"] = (inf.get("pick") or {}).get("group")
                 inf["battle_t"] = time.time(); time.sleep(random.uniform(1.5, 2.5)); return True
@@ -2160,6 +2160,8 @@ class ShukaAuto:
 
         # ---- 書庫 list: filtered to one 難易度 + 報酬未受取, the next quest is always the top-left one ----
         isl = not fl and is_shuka_list(data, off, w, h)
+        if isl and not _search_bar(data, off, w, h) and (now - inf.get("sortie_t", 0) < 15 or self.on_deck(data, off, w, h, sig)):
+            isl = False                      # the deck screen / the start of the quest after 出撃: not the list
         inf["list_n"] = inf.get("list_n", 0) + 1 if isl else 0
         if isl and inf["list_n"] < 2 and not _search_bar(data, off, w, h):
             time.sleep(random.uniform(.6, 1)); return     # looks like the list without its search bar: make sure on the next look
@@ -2331,7 +2333,7 @@ class ShukaAuto:
                 if _frac(data, off, w, h, (gx - .08, gy - .02, gx + .08, gy + .02), _TEAL) > .25:
                     pause(.5, 1.5); A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
                     inf["expect_deck"] = None; inf["battle_t"] = time.time()
-                    inf["msg"] = f"デッキ：{'書庫★5制限' if want == 'star5' else '書庫周回'}のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
+                    inf["sortie_t"] = time.time(); inf["msg"] = f"デッキ：{'書庫★5制限' if want == 'star5' else '書庫周回'}のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
                     time.sleep(random.uniform(1.5, 2.5)); return
                 time.sleep(random.uniform(.8, 1.4)); return          # not shown yet: look again (no AI)
             # a window with exactly one orange button (攻略のヒントの OK, リザルトの OK, 日付が変わりました ...):
@@ -2395,6 +2397,8 @@ class ShukaAuto:
             inf["lost"] = True
         if st == "battle" or "出撃" in why: inf["battle_t"] = now
         if a.get("quest"): inf["quest"] = str(a["quest"])[:40]
+        if st in ("quest_list", "home") or "書庫" in why:
+            inf["after_lp"] = False          # the long press landed on the quest menu: we walk to the 書庫 ourselves, no backing out
         if st == "shuka_list" and a["action"] == "tap" and float(a.get("x") or 0) > w * .875 and float(a.get("y") or 0) < h * .2:
             # the round 一覧 button right of 表示順変更 opens another window: press 表示順変更 instead
             a["x"], a["y"] = w * random.uniform(.68, .84), h * random.uniform(.125, .145); why += "（一覧ボタンではなく表示順変更）"
