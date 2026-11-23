@@ -2003,7 +2003,7 @@ class ShukaAuto:
                     # looks empty - but a list that is still loading or sliding in looks the same: only after
                     # 3 looks in a row over a few seconds, with the search bar showing, is it really empty
                     inf["empty_n"] = inf.get("empty_n", 0) + 1
-                    if inf["empty_n"] < 3 or not _search_bar(data, off, w, h):
+                    if inf["empty_n"] < 3 or (not _search_bar(data, off, w, h) and inf["empty_n"] < 6):
                         inf["msg"] = f"一覧が空に見える（{inf['empty_n']}回目の確認）"; time.sleep(random.uniform(1.2, 2)); return
                     inf["empty_n"] = 0
                     inf["diff"] = di + 1; inf["filter_for"] = None
