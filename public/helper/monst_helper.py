@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 87
+HELPER_VER = 88
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1929,7 +1929,8 @@ class ShukaAuto:
                 inf.update(in_quest=False, lost=False, quest="")
             pause(.8, 2.5)
             if inf.get("played"):            # long press: jumps to the 書庫 quest we last played, then back to the list
-                x, y = w * random.uniform(.46, .54), h * random.uniform(.77, .81)
+                # on the クエスト letters / just under them; the SHORT CUT band (y .72-.77) jumps somewhere else
+                x, y = w * random.uniform(.45, .55), h * random.uniform(.80, .835)
                 A.run("shell", "input", "swipe", *map(str, (round(x), round(y), round(x + random.uniform(-4, 4)), round(y + random.uniform(-4, 4)), round(random.uniform(950, 1300)))), timeout=15)
                 inf["after_lp"] = True; inf["msg"] = "ホーム：クエストを長押し"
             else:                            # first time: a plain tap on the lower half (the SHORT CUT part jumps elsewhere)
