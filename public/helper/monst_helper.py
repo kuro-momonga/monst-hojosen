@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 114
+HELPER_VER = 115
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1097,9 +1097,9 @@ def first_icon(data, off, w, h, start=.30):
                 if fr[m][1] > .08: end = m; low = 0
                 else:
                     low += 1
-                    if low > 2: break
+                    if low > 5: break           # dark parts inside an icon (water / dark element art)
             y0, y1 = fr[k][0], fr[end][0]
-            if w * .08 < y1 - y0 < w * .24: return y0, (y0 + y1) / 2
+            if w * .07 < y1 - y0 < w * .24: return y0, (y0 + y1) / 2
             j = end + 1
         else:
             j += 1
@@ -2186,6 +2186,8 @@ class ShukaAuto:
                     inf["fsess"] = None if seq else {"D": D, "taps": []}     # record the AI's presses only when there is nothing to replay
                     inf["replay"] = [list(p) for p in seq] if seq else None
                     log_line(A, f"表示順変更を開いた（難易度を「{D}」にする{'・覚えた押し方で' if seq else ''}）"); time.sleep(random.uniform(1.2, 2)); return
+                if f is None and inf.get("fallback_icon") and _search_bar(data, off, w, h):
+                    f = (h * .478, h * .508)          # under the first heading, list at its top (search bar showing)
                 if f is None:
                     # looks empty - but a list that is still loading or sliding in looks the same: only after
                     # 3 looks in a row over a few seconds, with the search bar showing, is it really empty
@@ -2201,6 +2203,9 @@ class ShukaAuto:
                     if cnt is not None:
                         left = cnt > 0
                         log_line(A, f"「{D}」の見出しの件数：{cnt}")
+                        if left and _search_bar(data, off, w, h):
+                            # quests are there but the icon was not found (dark art): tap where the first one always is
+                            inf["fallback_icon"] = True
                     else:
                         left = ask_claude_any_quest(png_small(data, off, w, h, 3), D)
                         with self.sh.lock: self.sh.ai_calls += 1
@@ -2210,7 +2215,7 @@ class ShukaAuto:
                     inf["diff"] = di + 1; inf["filter_for"] = None
                     log_line(A, f"「{D}」は全部終わりました → 次は「{DIFFS[di + 1] if di + 1 < len(DIFFS) else 'なし'}」")
                     return
-                inf["empty_n"] = 0
+                inf["empty_n"] = 0; inf["fallback_icon"] = False
                 n = inf.setdefault("skip", {}).get(D, 0)        # quests lost twice are skipped: the next one to the right
                 pause(.6, 1.8)
                 A.tap(w * (.13 + .181 * (n % 5)) + random.uniform(-.03, .03) * w, f[1] + w * .18 * (n // 5) + random.uniform(-.03, .03) * w, random.random())
