@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 90
+HELPER_VER = 91
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1869,10 +1869,12 @@ class ShukaAuto:
         if me and others:      # aim at the nearest other ball: friendship combos do the work
             tx, ty = min(others, key=lambda p: math.hypot(p[0] - me[0], p[1] - me[1]))
             ang = math.degrees(math.atan2(ty - me[1], tx - me[0])) + random.uniform(-3.5, 3.5)
-            cx, cy = me; how = "味方を狙った"
+            how = "味方を狙った"
         else:                  # labels not read: a shallow sideways shot (about 15 / 195 / -15 / 165 degrees, never exact)
             ang = random.choice((15, 195, -15, 165)) + random.uniform(-7, 7)
-            cx, cy = me if me else (w * random.uniform(.35, .65), h * random.uniform(.45, .6)); how = "横向き"
+            how = "横向き"
+        # the pull can start anywhere: start near the middle of the field so the whole drag stays on screen
+        cx, cy = w * random.uniform(.38, .62), h * random.uniform(.4, .52)
         A.shoot(ang, cx, cy, 1200, 120, True, "auto", random.random())
         inf["steps"] += 1; inf["msg"] = f"バトル：{ORD.get(k)} {how}（{ang:.0f}°）"; log_line(A, inf["msg"])
         time.sleep(random.uniform(5, 7.5))
