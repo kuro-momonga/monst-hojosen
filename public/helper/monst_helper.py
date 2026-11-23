@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 94
+HELPER_VER = 95
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1999,10 +1999,17 @@ class ShukaAuto:
                     inf["hist"] = (inf["hist"] + [f"絞り込みの確認：「絞り込み」で 難易度が「{D}」、初クリア報酬が「報酬未受取」になっているか見て、違えば直して「決定」"])[-14:]
                     pause(.6, 1.6); A.tap(w * random.uniform(.68, .84), h * random.uniform(.125, .145), random.random())
                     log_line(A, f"表示順変更を開いた（難易度を「{D}」にする）"); time.sleep(random.uniform(1.2, 2)); return
-                if f is None:                                   # nothing left at this difficulty: next one
+                if f is None:
+                    # looks empty - but a list that is still loading or sliding in looks the same: only after
+                    # 3 looks in a row over a few seconds, with the search bar showing, is it really empty
+                    inf["empty_n"] = inf.get("empty_n", 0) + 1
+                    if inf["empty_n"] < 3 or not _search_bar(data, off, w, h):
+                        inf["msg"] = f"一覧が空に見える（{inf['empty_n']}回目の確認）"; time.sleep(random.uniform(1.2, 2)); return
+                    inf["empty_n"] = 0
                     inf["diff"] = di + 1; inf["filter_for"] = None
                     log_line(A, f"「{D}」は全部終わりました → 次は「{DIFFS[di + 1] if di + 1 < len(DIFFS) else 'なし'}」")
                     return
+                inf["empty_n"] = 0
                 n = inf.setdefault("skip", {}).get(D, 0)        # quests lost twice are skipped: the next one to the right
                 pause(.6, 1.8)
                 A.tap(w * (.13 + .181 * (n % 5)) + random.uniform(-.03, .03) * w, f[1] + w * .18 * (n // 5) + random.uniform(-.03, .03) * w, random.random())
