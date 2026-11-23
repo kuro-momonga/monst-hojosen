@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 103
+HELPER_VER = 104
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2028,7 +2028,7 @@ class ShukaAuto:
                 if not inf.get("lost"):
                     inf["clears"] += 1
                     if G: inf.setdefault("fails", {})[G] = 0
-                    q = inf.get("quest") or (f"{G}" if G else "（名前不明）")
+                    q = inf.get("quest") or G or DIFFS[min(inf.get("diff", 0), len(DIFFS) - 1)]
                     self.log.append({"t": time.strftime("%m/%d %H:%M"), "i": i + 1, "quest": q, "orb": 1})
                     try: json.dump(self.log, open(SHUKA_LOG, "w", encoding="utf-8"), ensure_ascii=False)
                     except Exception: pass
@@ -2147,7 +2147,8 @@ class ShukaAuto:
 
         # ---- quest page (difficulty bands) ----
         else:
-            bands = [] if is_shuka_list(data, off, w, h) else quest_bands(data, off, w, h)
+            # a quest page has the 書庫 header (pt bar) on top: battle screens with teal bits are not quest pages
+            bands = [] if is_shuka_list(data, off, w, h) or not shuka_header(data, off, w, h) else quest_bands(data, off, w, h)
             if bands and same < 3 and self.rule(inf, "quest"):
                 if inf.get("after_lp"):          # reached by the long press from home: back to the list
                     inf["after_lp"] = False; pause(.6, 1.8); tap_back(A, w, h)
