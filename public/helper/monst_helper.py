@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 112
+HELPER_VER = 113
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -840,7 +840,9 @@ def screen_sig(data, off, w, h):
 
 def is_shuka_list(data, off, w, h):
     if _search_bar(data, off, w, h): return True
-    return shuka_header(data, off, w, h) and not quest_bands(data, off, w, h)
+    # without the search bar: the 書庫 header and no difficulty bands - and never a battle screen (party panel)
+    return shuka_header(data, off, w, h) and not Shuka._panel(None, data, off, w, h) and not quest_bands(data, off, w, h) \
+        and turn_from_rgba(data, off, w, h) is None
 
 
 def _search_bar(data, off, w, h):
@@ -2046,6 +2048,7 @@ class ShukaAuto:
             inf["shot_t"] = now
             try: self.sh.inst[i].update(png=png_small(data, off, w, h, 6), t=int(now), state="自動", note=inf.get("msg", ""), how="")
             except Exception: pass
+        inf["force_look"] = False          # set below only for this round
         # ---- battle ----
         k = turn_from_rgba(data, off, w, h)
         if k:
@@ -2071,7 +2074,9 @@ class ShukaAuto:
             if not (quiet > 30 and now - inf.get("look_t", 0) > 20):
                 time.sleep(random.uniform(1.2, 2)); return
             inf["look_t"] = now; inf["force_look"] = True      # fall through: a learned press or the AI looks at this screen
-        if is_loading(data, off, w, h):
+        if inf.get("force_look"):
+            pass
+        elif is_loading(data, off, w, h):
             inf["msg"] = "読み込み中"; time.sleep(random.uniform(.8, 1.6)); return
         # ---- stuck on one screen? ----
         sig = screen_sig(data, off, w, h)
@@ -2081,9 +2086,10 @@ class ShukaAuto:
             return self.stop(i, A, inf, "同じ画面から進めません")
         G = (inf.get("pick") or {}).get("group")
         want = "star5" if G == "★5以下制限" or canon(G) == "star5" else "normal"
+        fl = bool(inf.get("force_look"))       # looking at a battle screen for a dialog: the menu rules below stay out
 
         # ---- home ----
-        if is_home(data, off, w, h) and same < 4 and self.rule(inf, "home"):
+        if not fl and is_home(data, off, w, h) and same < 4 and self.rule(inf, "home"):
             if inf.get("in_quest"):          # back home after a quest: it was a clear unless we gave up
                 inf["ai_n"] = 0
                 if not inf.get("lost"):
@@ -2120,7 +2126,11 @@ class ShukaAuto:
             time.sleep(random.uniform(1.5, 2.5)); return
 
         # ---- 書庫 list: filtered to one 難易度 + 報酬未受取, the next quest is always the top-left one ----
-        if is_shuka_list(data, off, w, h):
+        isl = not fl and is_shuka_list(data, off, w, h)
+        inf["list_n"] = inf.get("list_n", 0) + 1 if isl else 0
+        if isl and inf["list_n"] < 2 and not _search_bar(data, off, w, h):
+            time.sleep(random.uniform(.6, 1)); return     # looks like the list without its search bar: make sure on the next look
+        if isl:
             inf["after_lp"] = False
             di = inf.get("diff", 0)
             if di >= len(DIFFS):
@@ -2185,7 +2195,7 @@ class ShukaAuto:
 
         # ---- after the long press we expect the cleared quest's page; if the SHORT CUT fired instead we are on the
         #      solo / helper / deck screens of the old quest: never start it again, go back until the list ----
-        if inf.get("after_lp") and not is_shuka_list(data, off, w, h) and not quest_bands(data, off, w, h):
+        if not fl and inf.get("after_lp") and not is_shuka_list(data, off, w, h) and not quest_bands(data, off, w, h):
             if self.on_deck(data, off, w, h, sig) or is_play_type(data, off, w, h) or (now - inf.get("lp_t", now) > 4):
                 inf["lp_backs"] = inf.get("lp_backs", 0) + 1
                 if inf["lp_backs"] <= 5:
@@ -2195,7 +2205,9 @@ class ShukaAuto:
                 inf["after_lp"] = False
 
         # ---- deck select ----
-        if self.on_deck(data, off, w, h, sig) and same < 3 and self.rule(inf, "deck"):
+        if fl:
+            pass
+        elif self.on_deck(data, off, w, h, sig) and same < 3 and self.rule(inf, "deck"):
             if self.deck(A, i, inf, want): return
             inf["hist"] = (inf["hist"] + [f"デッキを{'書庫★5制限' if want == 'star5' else '書庫周回'}にしたいが、プログラムでは見つからなかった"])[-14:]
 
@@ -2293,7 +2305,7 @@ class ShukaAuto:
                     A.tap(bx + random.uniform(-.03, .03) * w, by + random.uniform(-.006, .006) * h, random.random())
                     inf["msg"] = "オレンジのボタン（OKなど）を押した"; log_line(A, inf["msg"]); inf["steps"] += 1
                     inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]; time.sleep(random.uniform(1, 1.8)); return
-            if now - inf.get("battle_t", 0) < 20 and not inf.pop("force_look", False):     # just after battle activity
+            if now - inf.get("battle_t", 0) < 20 and not inf.get("force_look"):     # just after battle activity
                 inf["msg"] = "バトル：演出中"; time.sleep(random.uniform(1.2, 2)); return
             # only ask about a screen that holds still (no AI for screens in the middle of an animation)
             time.sleep(.7)
