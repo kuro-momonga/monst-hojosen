@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 97
+HELPER_VER = 98
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1895,6 +1895,9 @@ class ShukaAuto:
     def act(self, A, a, k, seed):
         rng = random.Random(seed); kind = a["action"]
         x, y = float(a.get("x", 0)) * k, float(a.get("y", 0)) * k
+        w, h = A.size or (1080, 1920)
+        if kind in ("tap", "longpress"):        # a learned press would otherwise hit the very same pixel every time
+            x += rng.uniform(-.012, .012) * w; y += rng.uniform(-.007, .007) * h
         if kind == "tap":
             A.tap(x, y, seed)
         elif kind == "longpress":
@@ -1951,9 +1954,16 @@ class ShukaAuto:
         else:                  # labels not read: a shallow sideways shot (about 15 / 195 / -15 / 165 degrees, never exact)
             ang = random.choice((15, 195, -15, 165)) + random.uniform(-7, 7)
             how = "横向き"
-        # the pull can start anywhere: start near the middle of the field so the whole drag stays on screen
-        cx, cy = w * random.uniform(.38, .62), h * random.uniform(.4, .52)
-        A.shoot(ang, cx, cy, 1200, 120, True, "auto", random.random())
+        # the pull can start anywhere (never on the ball every time): wherever the thumb happens to be, mostly
+        # around the middle. If the drag would not fit on screen from there, start from the middle instead.
+        r = random.random()
+        if r < .7: cx, cy = w * random.uniform(.3, .7), h * random.uniform(.35, .6)
+        else: cx, cy = w * random.uniform(.2, .8), h * random.uniform(.25, .7)
+        ms, hold = random.uniform(1000, 1450), random.uniform(60, 220)
+        try:
+            A.shoot(ang, cx, cy, ms, hold, True, "auto", random.random())
+        except RuntimeError:
+            A.shoot(ang, w * random.uniform(.4, .6), h * random.uniform(.42, .52), ms, hold, True, "auto", random.random())
         inf["steps"] += 1; inf["msg"] = f"バトル：{ORD.get(k)} {how}（{ang:.0f}°）"; log_line(A, inf["msg"])
         time.sleep(random.uniform(5, 7.5))
 
@@ -1977,10 +1987,11 @@ class ShukaAuto:
             quiet = now - inf.get("turn_t", now)
             if quiet > 60 and now - inf.get("blind_t", 0) > 20:     # our turn mark may be missed: a sideways shot (ignored if not our turn)
                 ang = random.choice((15, 195, -15, 165)) + random.uniform(-7, 7)
-                A.shoot(ang, w * random.uniform(.35, .65), h * random.uniform(.45, .6), 1200, 120, True, "auto", random.random())
+                A.shoot(ang, w * random.uniform(.4, .6), h * random.uniform(.42, .52), random.uniform(1000, 1450), random.uniform(60, 220), True, "auto", random.random())
                 inf["blind_t"] = now; log_line(A, f"バトル：番が読めないまま長いので横向きに打った（{ang:.0f}°）")
-            elif quiet > 25 and now - inf.get("poke_t", 0) > 9:
-                A.tap(w * random.uniform(.3, .7), h * random.uniform(.22, .32), random.random()); inf["poke_t"] = now
+            elif quiet > random.uniform(22, 32) and now - inf.get("poke_t", 0) > inf.get("poke_gap", 9):
+                A.tap(w * random.uniform(.25, .75), h * random.uniform(.2, .34), random.random()); inf["poke_t"] = now
+                inf["poke_gap"] = random.uniform(6, 15)
             if not (quiet > 30 and now - inf.get("look_t", 0) > 20):
                 time.sleep(random.uniform(1.2, 2)); return
             inf["look_t"] = now; inf["force_look"] = True      # fall through: a learned press or the AI looks at this screen
@@ -2007,6 +2018,18 @@ class ShukaAuto:
                     except Exception: pass
                     log_line(A, f"クリア {inf['clears']} 回目（{q}）")
                 inf.update(in_quest=False, lost=False, quest="")
+                # people do not play non-stop: a short break now and then, a longer one every 40-80 minutes
+                if not inf.get("next_rest"): inf["next_rest"] = now + random.uniform(40, 80) * 60
+                rest = 0
+                if now > inf["next_rest"]:
+                    rest = random.uniform(3, 10) * 60; inf["next_rest"] = now + rest + random.uniform(40, 80) * 60
+                elif random.random() < .08:
+                    rest = random.uniform(20, 120)
+                if rest:
+                    inf["msg"] = f"休憩中（約{round(rest / 60, 1)}分）"; log_line(A, inf["msg"])
+                    end = time.time() + rest
+                    while time.time() < end and self.run[i]: time.sleep(2)
+                    return
             pause(.8, 2.5)
             if inf.get("played"):            # long press: jumps to the 書庫 quest we last played, then back to the list
                 # on the クエスト letters / just under them; the SHORT CUT band (y .72-.77) jumps somewhere else
