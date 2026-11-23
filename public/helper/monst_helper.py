@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 110
+HELPER_VER = 111
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2050,6 +2050,12 @@ class ShukaAuto:
         if k:
             return self.battle(i, A, inf, data, off, w, h, k)
         if self.sh._panel(data, off, w, h):
+            # a window over the battle with one orange button (攻略のヒントの OK): press it, no AI
+            btn = [b for b in orange_buttons(data, off, w, h) if b[1] < h * .75]
+            if len(btn) == 1:
+                bx, by = btn[0]; pause(.5, 1.6)
+                A.tap(bx + random.uniform(-.03, .03) * w, by + random.uniform(-.006, .006) * h, random.random())
+                inf["msg"] = "バトル中の窓のOKを押した"; log_line(A, inf["msg"]); time.sleep(random.uniform(1, 1.8)); return
             if not inf.get("in_quest"): inf["turn_t"] = now        # a new quest: start the clock for the failsafes below
             inf["battle_t"] = now; inf["in_quest"] = True; inf["msg"] = "バトル：待ち"
             # nothing to do for long (e.g. "タップしてひろえ" at a stage end): tap the upper field now and then
@@ -2266,6 +2272,15 @@ class ShukaAuto:
                 for x in ("x", "y", "x2", "y2"):
                     if a.get(x) is not None: a[x] = float(a[x]) * 2
         else:
+            # a window with exactly one orange button (攻略のヒントの OK, リザルトの OK, 日付が変わりました ...):
+            # that button only moves things on. Press it ourselves, wherever the text pushed it - no AI.
+            if _frac(data, off, w, h, (.1, .4, .42, .6), _BLUE) < .2:
+                btn = orange_buttons(data, off, w, h)
+                if len(btn) == 1 and same < 3:
+                    bx, by = btn[0]; pause(.5, 1.6)
+                    A.tap(bx + random.uniform(-.03, .03) * w, by + random.uniform(-.006, .006) * h, random.random())
+                    inf["msg"] = "オレンジのボタン（OKなど）を押した"; log_line(A, inf["msg"]); inf["steps"] += 1
+                    inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]; time.sleep(random.uniform(1, 1.8)); return
             if now - inf.get("battle_t", 0) < 20 and not inf.pop("force_look", False):     # just after battle activity
                 inf["msg"] = "バトル：演出中"; time.sleep(random.uniform(1.2, 2)); return
             # only ask about a screen that holds still (no AI for screens in the middle of an animation)
