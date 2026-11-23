@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 109
+HELPER_VER = 110
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1000,9 +1000,16 @@ def ai_yen():
 
 
 def _count(j):
+    import inspect
     u = j.get("usage") or {}
-    AI_USE["in"] += int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0) or 0) + int(u.get("cache_creation_input_tokens", 0) or 0)
-    AI_USE["out"] += int(u.get("output_tokens", 0))
+    i_ = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0) or 0) + int(u.get("cache_creation_input_tokens", 0) or 0)
+    o_ = int(u.get("output_tokens", 0))
+    AI_USE["in"] += i_; AI_USE["out"] += o_
+    what = {"ask_claude_action": "画面の判断", "ask_claude_deck": "デッキ（画面全体）", "ask_claude_deckname": "デッキ名",
+            "ask_claude_head": "見出し", "ask_claude_state": "画面の判定", "ask_claude_count": "件数", "ask_claude_any_quest": "一覧の確認"}
+    try: fn = inspect.stack()[1].function
+    except Exception: fn = "?"
+    print(f"　（AI {what.get(fn, fn)}：約{(i_ * 0.10 + o_ * 0.50) / 1e6 * YEN_PER_USD:.3f}円）")
 
 
 SHUKA_GROUPS = os.path.join(HERE, "shuka_heads.json")      # learned headings (v79: a fresh start, older reads were unreliable)
@@ -1839,7 +1846,10 @@ class ShukaAuto:
 
     def on_deck(self, data, off, w, h, sig=None):
         """deck select: the teal 出撃 button where it was found the first time (the top of this screen shows the quest
-        name, so it looks different for every quest: only the button is compared)"""
+        name, so it looks different for every quest: only the button and the lower half are compared)"""
+        low = _gray_grid(data, off, w, h, .45, .97, 8, 10)
+        if any(sig_dist(low, d) < .05 for d in self.pos.get("deck_low", [])) and not is_home(data, off, w, h):
+            return True
         g = self.pos.get("go")
         if g and _frac(data, off, w, h, (g[0] - .06, g[1] - .012, g[0] + .06, g[1] + .012), _TEAL) > .45:
             if not is_home(data, off, w, h) and not is_play_type(data, off, w, h) and not quest_bands(data, off, w, h) and not _search_bar(data, off, w, h):
@@ -1879,6 +1889,12 @@ class ShukaAuto:
             self.pos["go"] = [float(r["go"][0]) * 3 / w, float(r["go"][1]) * 3 / h]
             self.pos["deck_y"] = ny
             self.pos["deck_sig"] = [round(v, 1) for v in screen_sig(data, off, w, h)]
+            gx, gy = self.pos["go"]; best = None          # the AI's point is rough: find the teal button's centre near it
+            for yy in range(int(h * (gy - .06)), int(h * (gy + .06)), 6):
+                for xx in range(int(w * max(.05, gx - .15)), int(w * min(.95, gx + .15)), 12):
+                    f = _frac(data, off, w, h, (xx / w - .05, yy / h - .01, xx / w + .05, yy / h + .01), _TEAL, 6)
+                    if best is None or f > best[0]: best = (f, xx / w, yy / h)
+            if best and best[0] > .5: self.pos["go"] = [round(best[1], 4), round(best[2], 4)]
         except Exception: return None
         kind = r.get("deck")
         if r.get("quest") and r.get("name") and norm_group(r["quest"]) == norm_group(r["name"]):
@@ -1898,6 +1914,11 @@ class ShukaAuto:
         Order of the decks: ... 書庫周回, 書庫★5制限, (デッキ5) ...  ★5 is the next deck to the RIGHT of 周回.
         To go to the deck on the right: finger right -> left. To the deck on the left: finger left -> right."""
         name = "書庫★5制限" if want == "star5" else "書庫周回"
+        try:
+            d0, o0, w0, h0 = A.raw_frame(); low = [round(v, 1) for v in _gray_grid(d0, o0, w0, h0, .45, .97, 8, 10)]
+            dl = self.pos.setdefault("deck_low", [])
+            if not any(sig_dist(low, d) < .03 for d in dl): dl.append(low); del dl[:-10]; self.save_pos()
+        except Exception: pass
         if inf.get("deck") == want and inf.get("deck_for") == (inf.get("pick") or {}).get("group"):
             # same difficulty as the last quest: the game keeps the last deck, so no reading - straight to 出撃
             data, off, w, h = A.raw_frame()
