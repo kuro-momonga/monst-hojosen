@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 96
+HELPER_VER = 97
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1147,6 +1147,26 @@ def ask_claude_deckname(png):
     return "other", t
 
 
+def ask_claude_count(png):
+    """the number on the right of the 書庫 list heading (how many quests in the group); None if not readable"""
+    import base64, urllib.request
+    key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
+    if not key: return None
+    body = {"model": SHUKA_MODEL, "max_tokens": 30, "messages": [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": "モンストの書庫一覧のグループ見出しの帯です（左に難易度名、右に件数）。右端の件数の数字だけを答えてください。見出しが無ければ none。"}]}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            j = json.loads(r.read()); _count(j)
+        t = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
+        m = re.search(r"\d+", t.translate(str.maketrans("０１２３４５６７８９", "0123456789")))
+        return int(m.group(0)) if m else None
+    except Exception:
+        return None
+
+
 def ask_claude_any_quest(png, diff):
     """is any quest left on this filtered 書庫 list? True / False, None when unsure or no answer"""
     import base64, urllib.request
@@ -2027,10 +2047,15 @@ class ShukaAuto:
                     inf["empty_n"] = 0
                     # before moving on, make sure there really is no 極 (etc.) quest on the list: a heading still shown,
                     # or the AI seeing a quest, means it is not empty
-                    if sum(head_bits(data, off, w, h)) > .3:
-                        log_line(A, f"アイコンは見えないが見出しがあるので「{D}」は終わっていない扱い"); time.sleep(1.5); return
-                    left = ask_claude_any_quest(png_small(data, off, w, h, 2), D)
+                    # the heading shows the count even at 0: read it (small crop of the heading band)
+                    cnt = ask_claude_count(png_crop(data, off, w, h, 0, .40, 1, .52))
                     with self.sh.lock: self.sh.ai_calls += 1
+                    if cnt is not None:
+                        left = cnt > 0
+                        log_line(A, f"「{D}」の見出しの件数：{cnt}")
+                    else:
+                        left = ask_claude_any_quest(png_small(data, off, w, h, 2), D)
+                        with self.sh.lock: self.sh.ai_calls += 1
                     if left is not False:
                         log_line(A, f"AIの確認：「{D}」のクエストがまだ一覧にある（または確認できない）ので続けます")
                         inf["msg"] = "一覧の確認待ち"; time.sleep(2); return
