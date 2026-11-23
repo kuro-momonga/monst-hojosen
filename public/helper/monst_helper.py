@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 79
+HELPER_VER = 80
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -740,6 +740,7 @@ def make_handler(adbs):
                     return self.reply(200, SH.status())
                 if self.path.startswith("/shuka/auto"):
                     i = int(q.get("i", 0)); AU.run[i] = bool(q.get("on")); SH.on = SH.on or AU.run[i]
+                    if AU.run[i]: AU.info[i].update(diff=0, filter_for=None, filter_try={}, h_last=None, same=0)     # every start: from 極 again
                     AU.info[i]["msg"] = "動いています" if AU.run[i] else "停止中"
                     print(f"書庫自動 {adbs[i].serial}: " + ("開始" if AU.run[i] else "停止"))
                     return self.reply(200, {"ok": True})
@@ -1034,7 +1035,29 @@ def canon(name):
     return None
 
 
-GROUP_KEYS = ["kiwami", "star5", "kyuu", "geki"]          # the order to clear: 極 > 究極★5以下制限 > 究極 > 激究極
+GROUP_KEYS = ["kiwami", "star5", "kyuu", "geki"]
+DIFFS = ["極", "★5以下制限", "究極", "激究極"]           # the 難易度 filter, in this order (same order as GROUP_KEYS)
+
+
+def first_icon_y(data, off, w, h):
+    """centre y of the top-left quest icon of the list (just under the first heading), or None when the list is empty"""
+    fr = []
+    for y in range(int(h * .465), int(h * .66), 3):
+        o = off + y * w * 4; n = t = 0
+        for x in range(int(w * .05), int(w * .21), 4):
+            i = o + x * 4; r, g, b = data[i], data[i + 1], data[i + 2]; mx = max(r, g, b); t += 1
+            if mx > 90 and mx - min(r, g, b) > 70: n += 1
+        fr.append((y, n / t))
+    k = next((j for j, (y, f) in enumerate(fr) if f > .3), None)       # the icon's top: colourful art
+    if k is None: return None
+    end = k; low = 0
+    for j in range(k + 1, len(fr)):
+        if fr[j][1] > .08: end = j; low = 0
+        else:
+            low += 1
+            if low > 2: break
+    y0, y1 = fr[k][0], fr[end][0]
+    return (y0 + y1) / 2 if y1 - y0 > w * .08 else None          # the order to clear: 極 > 究極★5以下制限 > 究極 > 激究極
 
 
 def ask_claude_head(png):
@@ -1251,8 +1274,8 @@ SHUKA_GOAL = """あなたはスマホゲーム「モンスターストライク�
 ルール：
 - ホーム画面：書庫のクエストをまだ1つも遊んでいなければ、真ん中の丸い「クエスト」ボタンの下半分（「クエスト」の文字かその下の「コラボ開催中」あたり）を普通にタップ。上の「SHORT CUT」や長押しは使わない。
 - クエスト一覧（ノーマル・イベントなどのアイコンが並ぶ）では「追憶の書庫」を押す。
-- 書庫の一覧（「モンスター名で検索」のバーがある）：プログラムがクエストを選ぶので wait。ただし流れに「絞り込みが必要」とあれば、右上の「表示順変更」→ 初クリア報酬を「報酬未受取」→「決定」。
-- 絞り込み・並び替えの窓：初クリア報酬を「報酬未受取」にして「決定」。
+- 書庫の一覧（「モンスター名で検索」のバーがある）：プログラムがクエストを選ぶので wait。ただし流れの最後のほうに「絞り込みが必要」とあれば、右上の緑の「表示順変更」を押す。
+- 絞り込み・並び替えの窓（state は filter）：上の「絞り込み」タブで、「難易度」の欄を押して流れで指定された難易度（極・★5以下制限・究極・激究極のどれか）を選び、「初クリア報酬」を「報酬未受取」にする。両方そうなっていれば緑の「決定」を押す（why に「決定」と書く）。開いた選択肢の一覧では、指定のものを1つ押す。
 - 助っ人選択では「現在のフレンド使用キャラ」の一番上のキャラを押す（fixed は true）。
 - デッキ選択でデッキ名が「書庫周回」「書庫★5制限」のどちらでもなければ、デッキ欄を横にスワイプして探す（★5制限は書庫周回の右隣）。
 - リザルト・スペシャル報酬・ステージクリア・モンスター獲得・ランクアップ・レベルアップ・ラック・ログインボーナス・日付が変わりましたなどは、画面を押すか「OK」「閉じる」「次へ」で進める。
@@ -1826,7 +1849,7 @@ class ShukaAuto:
         if same >= 15:
             return self.stop(i, A, inf, "同じ画面から進めません")
         G = (inf.get("pick") or {}).get("group")
-        want = "star5" if canon(G) == "star5" else "normal"
+        want = "star5" if G == "★5以下制限" or canon(G) == "star5" else "normal"
 
         # ---- home ----
         if is_home(data, off, w, h) and same < 4 and self.rule(inf, "home"):
@@ -1851,14 +1874,37 @@ class ShukaAuto:
             log_line(A, inf["msg"]); inf["steps"] += 1; inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]
             time.sleep(random.uniform(1.5, 2.5)); return
 
-        # ---- 書庫 list ----
+        # ---- 書庫 list: filtered to one 難易度 + 報酬未受取, the next quest is always the top-left one ----
         if is_shuka_list(data, off, w, h):
             inf["after_lp"] = False
-            if not inf.get("need_filter") and not inf.get("_pickfail") and same < 3 and self.rule(inf, "list"):
-                if self.pick_quest(A, i, inf): return
-                inf["_pickfail"] = True
-                inf["hist"] = (inf["hist"] + ["プログラムがスクロールバーでクエストを選べなかった。極→究極★5以下制限→究極→激究極の順に、そのグループの左上のクエストを押して"])[-14:]
-            # need_filter / pick failed: the AI below handles it
+            di = inf.get("diff", 0)
+            if di >= len(DIFFS):
+                return self.stop(i, A, inf, "極・★5以下制限・究極・激究極のクエストは全部終わりました")
+            D = DIFFS[di]
+            if same < 4 and self.rule(inf, "list"):
+                if inf.get("filter_for") != D:
+                    tries = inf.setdefault("filter_try", {}); tries[D] = tries.get(D, 0) + 1
+                    if tries[D] > 4:
+                        return self.stop(i, A, inf, f"絞り込みを「{D}」にできませんでした")
+                    inf["need_filter"] = True; inf["filter_target"] = D
+                    inf["hist"] = (inf["hist"] + [f"絞り込みが必要：右上の「表示順変更」→「絞り込み」で 難易度を「{D}」、初クリア報酬を「報酬未受取」にして「決定」"])[-14:]
+                    # falls through to the AI below, which works the filter window
+                else:
+                    top_name = self.name_of(head_bits(data, off, w, h), lambda: png_crop(data, off, w, h, *HEAD_BOX))
+                    y = first_icon_y(data, off, w, h)
+                    if y is None and top_name is None:          # nothing left at this difficulty: next one
+                        inf["diff"] = di + 1; inf["filter_for"] = None
+                        log_line(A, f"「{D}」は全部終わりました → 次は「{DIFFS[di + 1] if di + 1 < len(DIFFS) else 'なし'}」")
+                        return
+                    if top_name and canon(top_name) != GROUP_KEYS[di]:      # not this difficulty (the filter was reset or set wrong)
+                        log_line(A, f"一覧の一番上が「{top_name}」なので、絞り込みをやり直します"); inf["filter_for"] = None; return
+                    if y is not None:
+                        n = inf.setdefault("skip", {}).get(D, 0)        # quests lost twice are skipped: the next one to the right
+                        pause(.6, 1.8)
+                        A.tap(w * (.13 + .181 * (n % 5)) + random.uniform(-.03, .03) * w, y + w * .18 * (n // 5) + random.uniform(-.03, .03) * w, random.random())
+                        inf["pick"] = {"group": D}; inf["from_list"] = True; inf["steps"] += 1; inf.setdefault("filter_try", {})[D] = 0
+                        inf["msg"] = f"一覧：「{D}」の{n + 1}番目（左上{'' if n == 0 else 'から' + str(n + 1) + '番目'}）を押した"; log_line(A, inf["msg"])
+                        inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]; time.sleep(random.uniform(1.2, 2)); return
         else:
             inf["_pickfail"] = False
 
@@ -1887,7 +1933,7 @@ class ShukaAuto:
                     inf["from_list"] = False; pause(.6, 1.6); tap_back(A, w, h)
                     inf["clear_seen"] = inf.get("clear_seen", 0) + 1
                     if inf["clear_seen"] == 1:
-                        inf["need_filter"] = True; inf["msg"] = "CLEAR済みのクエスト：戻って絞り込みを直す"
+                        inf["filter_for"] = None; inf["msg"] = "CLEAR済みのクエスト：戻って絞り込みを直す"
                         inf["hist"] = (inf["hist"] + ["一覧にCLEAR済みが出ていた。絞り込みが必要：表示順変更→初クリア報酬を「報酬未受取」→決定"])[-14:]
                     else:
                         if G: inf.setdefault("skip", {})[G] = inf["skip"].get(G, 0) + 1
@@ -1947,7 +1993,9 @@ class ShukaAuto:
             inf["lost"] = True
         if st == "battle": inf["battle_t"] = now
         if a.get("quest"): inf["quest"] = str(a["quest"])[:40]
-        if st == "filter" or (st == "shuka_list" and a["action"] == "tap"): inf["need_filter"] = False
+        if st == "filter" and "決定" in why and inf.get("filter_target"):
+            inf["filter_for"] = inf.pop("filter_target"); inf["need_filter"] = False
+            log_line(A, f"絞り込み：難易度「{inf['filter_for']}」・報酬未受取にしました")
         inf["msg"] = f"{st}：{a['action']}（{how}）{why}"; log_line(A, inf["msg"])
         if a["action"] == "stop":
             return self.stop(i, A, inf, why or st)
