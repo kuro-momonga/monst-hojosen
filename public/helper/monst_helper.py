@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 99
+HELPER_VER = 100
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -669,7 +669,7 @@ def make_handler(adbs):
                                        f"<span>{sn['t']}秒 → {_h.escape(' / '.join(sn['names']) or '（読めず）')}</span></div>")
                     return self.reply(200, "".join(out).encode(), "text/html; charset=utf-8")
                 if self.path.startswith("/shuka/state"):
-                    return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k in ("msg", "steps", "clears", "quest")}} for i in range(len(adbs))]})
+                    return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k in ("msg", "steps", "clears", "quest")}, "diff": DIFFS[min(AU.info[i].get("diff", 0), len(DIFFS) - 1)], "done": AU.info[i].get("diff", 0) >= len(DIFFS)} for i in range(len(adbs))]})
                 if self.path.startswith("/shuka/limg"):
                     from urllib.parse import urlparse, parse_qs
                     lid = "".join(ch for ch in (parse_qs(urlparse(self.path).query).get("id") or [""])[0] if ch.isdigit())
@@ -1978,6 +1978,10 @@ class ShukaAuto:
     def step(self, i, A, inf):
         data, off, w, h = A.raw_frame()
         now = time.time()
+        if now - inf.get("shot_t", 0) > 2.5:          # the page shows what this screen looks like right now
+            inf["shot_t"] = now
+            try: self.sh.inst[i].update(png=png_small(data, off, w, h, 6), t=int(now), state="自動", note=inf.get("msg", ""), how="")
+            except Exception: pass
         # ---- battle ----
         k = turn_from_rgba(data, off, w, h)
         if k:
@@ -2227,41 +2231,66 @@ class ShukaAuto:
 
 SHUKA_PAGE = """<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>書庫周回</title><style>
-body{margin:0;background:#0f1115;color:#e8eaef;font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
-header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #2a2f3a}
-h1{font-size:17px;margin:0}button,select,input{font:inherit;font-size:14px;border-radius:8px;border:1px solid #2a2f3a;background:#1c2029;color:#e8eaef;padding:8px 12px}
-button.on{background:#1f5a3a;border-color:#3ddc84}.small{font-size:12px;color:#8b93a3}
-main{display:flex;gap:16px;flex-wrap:wrap;padding:16px}.c{background:#171a21;border:1px solid #2a2f3a;border-radius:12px;padding:12px;width:300px;display:flex;flex-direction:column;gap:8px}
-.c img{width:100%;border-radius:8px;background:#000;min-height:200px}.st{font-size:22px;font-weight:800;color:#ffcf3f}
-</style></head><body><header><h1>書庫周回</h1>
-<button id="run">判定を始める</button><span id="info" class="small"></span><span style="flex:1"></span>
-<a href="/shuka/debug" target="_blank" class="small" style="color:#8bd">一覧の読み取りを見る</a><span id="keybox" class="small"></span></header><main id="m"></main>
-<h2 style="font-size:15px;margin:8px 16px" id="lh"></h2><div id="LG" style="margin:0 16px;font-size:13px;line-height:1.8;max-height:260px;overflow:auto;background:#171a21;border:1px solid #2a2f3a;border-radius:10px;padding:8px 12px"></div>
-<h2 style="font-size:15px;margin:8px 16px">覚えた画面（違っていたら直す・消す）</h2><main id="L"></main><script>
+:root{--bg:#0e1014;--card:#171a21;--line:#262b36;--tx:#e8eaef;--mut:#8b93a3;--go:#3ddc84;--warn:#ffcf3f;--bad:#ff6b6b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
+header{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
+h1{font-size:19px;margin:0}.sum{display:flex;gap:18px;font-size:14px}.sum b{font-size:22px;color:var(--warn);margin-right:3px}
+button{font:inherit;font-size:14px;border-radius:10px;border:1px solid var(--line);background:#1f2430;color:var(--tx);padding:9px 14px;cursor:pointer}
+button.go{background:#1f5a3a;border-color:var(--go)}button.stop{background:#4a2326;border-color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;padding:18px 20px}
+.c{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.top{display:flex;justify-content:space-between;align-items:center}.nm{font-weight:700}.pill{font-size:12px;padding:3px 10px;border-radius:99px;background:#2a2f3a;color:var(--mut)}
+.pill.run{background:#173d2a;color:var(--go)}.pill.rest{background:#3d3517;color:var(--warn)}.pill.stopd{background:#3d1a1d;color:var(--bad)}
+.c img{width:100%;aspect-ratio:9/16;object-fit:cover;border-radius:10px;background:#000}
+.kv{display:flex;gap:12px;font-size:13px;color:var(--mut)}.kv b{color:var(--tx);font-size:15px}
+.msg{font-size:13px;line-height:1.5;min-height:3em;color:#cfd4dd}
+section{margin:6px 20px 20px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+h2{font-size:15px;margin:0 0 10px}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:6px 8px;border-top:1px solid var(--line)}
+.lg{max-height:300px;overflow:auto}details summary{cursor:pointer;color:var(--mut);font-size:13px}.small{font-size:12px;color:var(--mut)}
+.L{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:10px}.L div{font-size:12px}.L img{width:100%;border-radius:6px}
+input,select{font:inherit;font-size:13px;border-radius:8px;border:1px solid var(--line);background:#1f2430;color:var(--tx);padding:7px 10px}
+</style></head><body>
+<header><h1>書庫周回</h1><div class="sum"><span>きょうのオーブ <b id="orbs">0</b></span><span>AI料金 <b id="yen" style="font-size:16px">0円</b></span></div>
+<span style="flex:1"></span><button id="all" class="go">ぜんぶ回す</button><button id="none" class="stop">ぜんぶ止める</button></header>
+<div class="grid" id="m"></div>
+<section><h2 id="lh">クリアしたクエスト</h2><div class="lg"><table id="LG"></table></div></section>
+<section><details><summary>くわしい設定・調べもの（ふだんは触らなくてOK）</summary>
+<p class="small" id="keybox"></p>
+<p><button id="run">画面の判定だけ始める</button> <a href="/shuka/debug" target="_blank" class="small" style="color:#8bd">一覧の読み取りを見る</a></p>
+<p class="small" id="info"></p><h2 style="margin-top:12px">覚えた画面（違っていたら直す・消す）</h2><div class="L" id="L"></div></details></section>
+<script>
 let S=null;const $=id=>document.getElementById(id);
+const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function post(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
-async function tick(){try{S=await (await fetch('/shuka/state')).json();render();}catch(e){$('info').textContent='ヘルパーにつながりません';}}
-function render(){$('run').textContent=S.on?'判定を止める':'判定を始める';$('run').classList.toggle('on',S.on);
-$('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}（実際の料金 約${S.yen.toFixed(2)}円）`;
-if(S.key)$('keybox').textContent='APIキー：設定済み';
-else if(!$('k')){$('keybox').innerHTML='APIキー未設定 <input id="k" type="password" placeholder="sk-ant-..." style="width:180px"> <button id="ks">保存</button>';
-$('ks').onclick=async()=>{const r=await post('/shuka/key',{key:$('k').value.trim()});if(!r.ok)alert(r.error);else{$('keybox').textContent='APIキー：設定済み';tick();}};}
-const opts=Object.entries(S.states).map(([k,v])=>`<option value="${k}">${k}：${v}</option>`).join('');
-$('m').innerHTML=S.inst.map((s,i)=>`<div class="c"><div class="small">${i+1}画面目 ${s.serial}</div><div class="st">${s.state}</div>
-<div class="small">${s.note||''} ${s.how?'・'+s.how:''}</div><img src="/shuka/thumb?i=${i}&t=${s.t}" alt="">
-<button data-a="${i}" class="${S.auto&&S.auto[i].on?'on':''}">${S.auto&&S.auto[i].on?'自動を止める':'この画面を自動で回す'}</button>
-<div class="small">${S.auto?S.auto[i].msg+' ・操作'+S.auto[i].steps+'回':''}</div>
-<div class="small">違っていたら直す：</div><select data-i="${i}"><option value="">選ぶ…</option>${opts}</select></div>`).join('');
-document.querySelectorAll('button[data-a]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.a;await post('/shuka/auto',{i,on:!(S.auto&&S.auto[i].on)});tick();});
-document.querySelectorAll('select[data-i]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/fix',{i:+x.dataset.i,state:x.value});tick();}});
-const lg=S.log||[];$('lh').textContent=`クリアしたクエスト ${lg.length}個 ・ オーブ ${lg.reduce((a,b)=>a+(b.orb||0),0)}個`;
-$('LG').innerHTML=lg.length?lg.slice().reverse().map(l=>`${l.t}　${l.i}画面目　${l.quest}　+${l.orb}オーブ`).join('<br>'):'まだありません';
-const sig=S.learn.map(l=>l.id+l.state).join();if(sig!==window._ls){window._ls=sig;
-$('L').innerHTML=S.learn.map(l=>`<div class="c" style="width:170px"><div class="st" style="font-size:16px">${l.state}</div><div class="small">${l.note||''} ・${l.n}回</div>
-<img src="/shuka/limg?id=${l.id}" alt="" style="min-height:0"><select data-l="${l.id}"><option value="">直す…</option>${opts}<option value="_delete">この見本を消す</option></select></div>`).join('');
-document.querySelectorAll('select[data-l]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/relabel',{id:x.dataset.l,state:x.value});window._ls='';tick();}});}}
+async function tick(){try{S=await (await fetch('/shuka/state')).json();render();}catch(e){$('m').innerHTML='<p class="small" style="padding:20px">ヘルパーにつながりません（start_helper.bat が動いているか確認）</p>';}}
+function pill(a){if(!a.on)return a.msg&&a.msg.startsWith('止めました')?['stopd','止まりました']:['','停止中'];if((a.msg||'').startsWith('休憩'))return['rest','休憩中'];return['run','動いています'];}
+function render(){
+ const today=new Date();const md=String(today.getMonth()+1).padStart(2,'0')+'/'+String(today.getDate()).padStart(2,'0');
+ const lg=S.log||[];$('orbs').textContent=lg.filter(l=>(l.t||'').startsWith(md)).reduce((a,b)=>a+(b.orb||0),0);
+ $('yen').textContent=`約${S.yen.toFixed(2)}円`;
+ $('m').innerHTML=S.inst.map((s,i)=>{const a=(S.auto||[])[i]||{};const [pc,pt]=pill(a);
+  return `<div class="c"><div class="top"><span class="nm">${i+1}画面目</span><span class="pill ${pc}">${pt}</span></div>
+  <img src="/shuka/thumb?i=${i}&t=${s.t}" alt="">
+  <div class="kv"><span>いまの難易度 <b>${a.done?'全部おわり':esc(a.diff||'極')}</b></span><span>クリア <b>${a.clears||0}</b></span></div>
+  <div class="msg">${esc(a.on||a.msg?a.msg:s.state)}</div>
+  <button data-a="${i}" class="${a.on?'stop':'go'}">${a.on?'止める':'回す'}</button>
+  <div class="small">${esc(s.serial)}</div></div>`;}).join('');
+ document.querySelectorAll('button[data-a]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.a;await post('/shuka/auto',{i,on:!((S.auto||[])[i]||{}).on});tick();});
+ $('lh').textContent=`クリアしたクエスト ${lg.length}個 ・ オーブ ${lg.reduce((a,b)=>a+(b.orb||0),0)}個`;
+ $('LG').innerHTML=lg.length?lg.slice().reverse().map(l=>`<tr><td>${esc(l.t)}</td><td>${l.i}画面目</td><td>${esc(l.quest)}</td><td>+${l.orb}オーブ</td></tr>`).join(''):'<tr><td class="small">まだありません</td></tr>';
+ $('run').textContent=S.on?'画面の判定を止める':'画面の判定だけ始める';
+ $('info').textContent=`覚えた画面 ${S.learned} ・ AIに聞いた回数 ${S.ai_calls}`;
+ if(S.key)$('keybox').textContent='APIキー：設定済み';
+ else if(!$('k')){$('keybox').innerHTML='APIキー未設定 <input id="k" type="password" placeholder="sk-ant-..." style="width:200px"> <button id="ks">保存</button>';
+  $('ks').onclick=async()=>{const r=await post('/shuka/key',{key:$('k').value.trim()});if(!r.ok)alert(r.error);else{$('keybox').textContent='APIキー：設定済み';tick();}};}
+ const opts=Object.entries(S.states).map(([k,v])=>`<option value="${k}">${k}：${esc(v)}</option>`).join('');
+ const sig=S.learn.map(l=>l.id+l.state).join();if(sig!==window._ls){window._ls=sig;
+  $('L').innerHTML=S.learn.map(l=>`<div><b>${esc(l.state)}</b> <span class="small">${l.n}回</span><img src="/shuka/limg?id=${l.id}" alt=""><select data-l="${l.id}"><option value="">直す…</option>${opts}<option value="_delete">この見本を消す</option></select></div>`).join('');
+  document.querySelectorAll('select[data-l]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/relabel',{id:x.dataset.l,state:x.value});window._ls='';tick();}});}}
 $('run').onclick=async()=>{await post('/shuka/run',{on:!S.on});tick();};
-tick();setInterval(()=>{if(!document.querySelector('select:focus'))tick();},3000);
+$('all').onclick=async()=>{for(let i=0;i<S.inst.length;i++){if(!((S.auto||[])[i]||{}).on){await post('/shuka/auto',{i,on:true});await new Promise(r=>setTimeout(r,1500+Math.random()*2500));}}tick();};
+$('none').onclick=async()=>{for(let i=0;i<S.inst.length;i++)await post('/shuka/auto',{i,on:false});tick();};
+tick();setInterval(()=>{if(!document.querySelector('select:focus,input:focus'))tick();},3000);
 </script></body></html>"""
 
 
