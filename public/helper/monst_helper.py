@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 92
+HELPER_VER = 93
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1414,7 +1414,7 @@ def find_labels(data, off, w, h):
                 if (p[0] + dx, p[1] + dy) in white: n += 1
         if n / area > .12: core[p] = c
     hx, hy = max(1, round(13 * u / st)), max(1, round(4 * u / st))
-    seen = set(); out = []
+    seen = set(); out = []; cands = []
 
     def mask_at(xx, yy, c):
         i = off + (yy * w + xx) * 4
@@ -1437,10 +1437,14 @@ def find_labels(data, off, w, h):
                     F.append(v / n)
         return F
 
+    blob_sc = {}
+
     def read(F, c):
         best = (0, 0, 0, 58.5)
         for key, dy in (("LABEL_TPL_Y", 58.5),) if c == 2 else ((("LABEL_TPL_G", 66), ("LABEL_TPL", 58.5)) if c == 4 else (("LABEL_TPL", 58.5),)):
             sc = sorted(((_ncc(F, t), k + 1) for k, t in enumerate(_TPL[key])), reverse=True)
+            for v, nn in sc:
+                if v > blob_sc.get(nn, (-1,))[0]: blob_sc[nn] = (v, dy)
             if sc[0][0] > best[0]: best = (sc[0][0], sc[0][0] - sc[1][0], sc[0][1], dy)
         return best
 
@@ -1478,6 +1482,7 @@ def find_labels(data, off, w, h):
         ya = min(p[1] for p in pts) * st; yb = max(p[1] for p in pts) * st + st - 1
         lw, lh = (xb - xa) / u, (yb - ya) / u
         if len(pts) * st * st < 150 * u * u or not (40 <= lw <= 280 and 14 <= lh <= 140): continue
+        blob_sc.clear()
         if 50 <= lw <= 115 and 16 <= lh <= 48:
             # the grid box is only good to a couple of pixels: try the edges a little in and out (integral image, cheap)
             X0, Y0 = max(0, xa - 6), max(0, ya - 6); X1, Y1 = min(w, xb + 7), min(h, yb + 7); W1 = X1 - X0 + 1
@@ -1502,10 +1507,37 @@ def find_labels(data, off, w, h):
             r, x, y = sl; out.append((r[2], x, y + r[3] * u, r[0])); continue
         if lw <= 130 and lh <= 60:
             out.append((0, (xa + xb) / 2, (ya + yb) / 2 + 58.5 * u, 0))
+        if blob_sc:        # unread: keep how well it looked like each number (for elimination by read_labels)
+            cands.append(((xa + xb) / 2, (ya + yb) / 2, {nn: v for nn, v in blob_sc.items()}))
     res = {}
     for nn, x, y, sc in out:          # best one per number
         if nn and (nn not in res or sc > res[nn][2]): res[nn] = (x, y, sc)
+    find_labels.cands = [(x, y + sc[nn][1] * u, nn, sc[nn][0]) for x, y, sc in cands for nn in sc]
     return [(nn, v[0], v[1]) for nn, v in res.items()] + [(0, x, y) for nn, x, y, sc in out if not nn]
+
+
+def read_labels(A, data, off, w, h):
+    """1st..4th labels, with two helps for labels the shape match could not read for sure (one half hidden behind
+    another ball, an effect over it): a second look a moment later, and for each still-missing number the unread
+    blob that looks most like it (a weaker match is enough once the other numbers are placed)."""
+    L = find_labels(data, off, w, h); cands = list(getattr(find_labels, "cands", []))
+    known = {n: (x, y) for n, x, y in L if n}
+    if len(known) < 4:
+        time.sleep(.25)
+        try:
+            d2, o2, w2, h2 = A.raw_frame()
+            for n, x, y in find_labels(d2, o2, w2, h2):
+                if n and n not in known: known[n] = (x, y)
+            cands += getattr(find_labels, "cands", [])
+        except Exception:
+            pass
+    far = lambda x, y: all(math.hypot(x - kx, y - ky) > w * .06 for kx, ky in known.values())
+    for m in sorted((n for n in (1, 2, 3, 4) if n not in known),
+                    key=lambda m: -max([v for x, y, nn, v in cands if nn == m] or [0])):
+        best = max(((v, x, y) for x, y, nn, v in cands if nn == m and far(x, y)), default=None)
+        if best and best[0] > .5:
+            known[m] = (best[1], best[2])
+    return [(n, x, y) for n, (x, y) in known.items()]
 
 
 def pause(a, b):
@@ -1868,9 +1900,9 @@ class ShukaAuto:
         pause(.4, 2.2)
         data, off, w, h = A.raw_frame()                     # the field may have moved while we waited
         if not turn_from_rgba(data, off, w, h): return
-        L = find_labels(data, off, w, h)
+        L = read_labels(A, data, off, w, h)
         me = next(((x, y) for n, x, y in L if n == k), None)
-        others = [(x, y) for n, x, y in L if (n and n != k) or (not n and me and math.hypot(x - me[0], y - me[1]) > w * .08)]
+        others = [(x, y) for n, x, y in L if n and n != k]
         if me and others:      # aim at the nearest other ball: friendship combos do the work
             tx, ty = min(others, key=lambda p: math.hypot(p[0] - me[0], p[1] - me[1]))
             ang = math.degrees(math.atan2(ty - me[1], tx - me[0])) + random.uniform(-3.5, 3.5)
