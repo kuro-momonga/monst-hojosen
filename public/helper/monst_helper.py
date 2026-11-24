@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 120
+HELPER_VER = 121
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1217,9 +1217,10 @@ def ask_claude_any_quest(png, diff):
     import base64, urllib.request
     key = open(KEY_FILE).read().strip() if KEY_FILE and os.path.exists(KEY_FILE) else ""
     if not key: return None
+    cond = diff if diff.startswith("ユーザー") else "難易度「" + diff + "」"
     body = {"model": SHUKA_MODEL, "max_tokens": 50, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
-        {"type": "text", "text": f"モンストの「追憶の書庫」の一覧です（{diff if diff.startswith("ユーザー") else "難易度「" + diff + "」"}で絞り込み中のはず）。一覧にクエスト（モンスターのアイコン）が1つでも表示されていれば yes、1つもなければ no、一覧の画面でない・読み込み中なら unsure とだけ答えてください。"}]}]}
+        {"type": "text", "text": f"モンストの「追憶の書庫」の一覧です（{cond}で絞り込み中のはず）。一覧にクエスト（モンスターのアイコン）が1つでも表示されていれば yes、1つもなければ no、一覧の画面でない・読み込み中なら unsure とだけ答えてください。"}]}]}
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
