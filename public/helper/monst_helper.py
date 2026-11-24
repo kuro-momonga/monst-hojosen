@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 117
+HELPER_VER = 118
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1412,6 +1412,8 @@ def ask_claude_action(png, W, H, hist):
             j = json.loads(r.read()); _count(j)
     except urllib.error.HTTPError as e:
         return None, f"AIエラー {e.code}: {e.read().decode(errors='ignore')[:80]}"
+    except Exception as e:                       # no internet (getaddrinfo failed, timeout ...): nothing was used
+        return None, "NET:" + str(e)[:60]
     txt = "".join(c.get("text", "") for c in j.get("content", []) if c.get("type") == "text")
     m = re.search(r"\{.*\}", txt, re.S)
     if not m:
@@ -2037,6 +2039,13 @@ class ShukaAuto:
         time.sleep(random.uniform(.3, 1.0))
         data, off, w, h = A.raw_frame()                     # the field may have moved while we waited
         if not turn_from_rgba(data, off, w, h): return
+        inf["k_rep"] = inf.get("k_rep", 0) + 1 if k == inf.get("last_k") else 0; inf["last_k"] = k
+        if inf["k_rep"] >= 6:
+            # the same ball's turn 6+ times in a row: the shots do not go (the game waits on the network). Do not keep
+            # pulling: wait, and let the dialog rules (通信エラー → リトライ) take over when a window shows
+            if inf["k_rep"] == 6: log_line(A, "バトル：何度打っても番が変わらない（通信待ち？）ので様子を見ます")
+            inf["msg"] = "バトル：様子見"; time.sleep(random.uniform(8, 14))
+            if inf["k_rep"] % 4: return
         L = read_labels(A, data, off, w, h, deadline=t0 + 3.8) if time.time() < t0 + 3 else []
         me = next(((x, y) for n, x, y in L if n == k), None)
         others = [(x, y) for n, x, y in L if n and n != k]
@@ -2255,7 +2264,7 @@ class ShukaAuto:
         elif is_play_type(data, off, w, h) and same < 3 and self.rule(inf, "solo"):
             pause(.6, 1.8)
             A.tap(w * random.uniform(.15, .36), h * random.uniform(.47, .6), random.random())
-            inf["msg"] = "ソロを押した"; log_line(A, inf["msg"]); inf["steps"] += 1
+            inf["qp_dlg"] = 0; inf["msg"] = "ソロを押した"; log_line(A, inf["msg"]); inf["steps"] += 1
             inf["hist"] = (inf["hist"] + ["ソロを押した"])[-14:]; time.sleep(random.uniform(1.2, 2)); return
 
         # ---- quest page (difficulty bands) ----
@@ -2282,6 +2291,9 @@ class ShukaAuto:
                         inf["msg"] = "CLEAR済みのクエスト：戻って隣のクエストにする"
                 else:                            # the top band is the hardest difficulty: play that one
                     inf["from_list"] = False; inf["played"] = True
+                    if inf.get("qp_dlg", 0) >= 2:
+                        return self.stop(i, A, inf, "クエストを押すたびにOKの窓が出て始められません（書庫ポイント切れだと思います）。今日はここまでです")
+                    inf["qp_t"] = time.time()
                     pause(.6, 1.8)
                     A.tap(w * random.uniform(.22, .55), bands[0] + h * random.uniform(-.008, .008), random.random())
                     inf["msg"] = f"クエストのページ：一番上の難易度（{G or '?'}）"
@@ -2341,6 +2353,7 @@ class ShukaAuto:
             if _frac(data, off, w, h, (.1, .4, .42, .6), _BLUE) < .2:
                 btn = orange_buttons(data, off, w, h)
                 if len(btn) == 1 and same < 3:
+                    if now - inf.get("qp_t", 0) < 10: inf["qp_dlg"] = inf.get("qp_dlg", 0) + 1   # a window right after the quest page
                     bx, by = btn[0]; pause(.5, 1.6)
                     A.tap(bx + random.uniform(-.03, .03) * w, by + random.uniform(-.006, .006) * h, random.random())
                     inf["msg"] = "オレンジのボタン（OKなど）を押した"; log_line(A, inf["msg"]); inf["steps"] += 1
@@ -2362,6 +2375,12 @@ class ShukaAuto:
                 return self.stop(i, A, inf, "クリアの間にAIへ10回以上聞いたので、安全のため止めました（ログを見せてください）")
             a, err = ask_claude_action(png_small(data, off, w, h, 3), w // 3, h // 3, hist)
             with self.sh.lock: self.sh.ai_calls += 1
+            if not a and err.startswith("NET:"):
+                inf["ai_n"] -= 1                  # the AI was not reached: not counted towards the safety stop
+                with self.sh.lock: self.sh.ai_calls -= 1
+                if not inf.get("net_down"): log_line(A, "インターネットにつながっていません。つながるまで待ちます")
+                inf["net_down"] = True; inf["msg"] = "ネット待ち"; time.sleep(random.uniform(25, 40)); return
+            inf["net_down"] = False
             if not a:
                 inf["msg"] = "AI：" + err; time.sleep(8); return
             how = "AI"
