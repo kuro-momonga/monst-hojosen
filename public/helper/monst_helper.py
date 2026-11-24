@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 121
+HELPER_VER = 122
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2187,7 +2187,7 @@ class ShukaAuto:
             inf["replay_wait"] = 0
             if inf.get("replay") is not None:       # back on the list after replaying the filter presses
                 if not inf["replay"]:
-                    inf["filter_for"] = inf.pop("filter_target", None); log_line(A, f"絞り込み：覚えた押し方で「{inf['filter_for']}」にしました")
+                    inf["filter_for"] = inf.pop("filter_target", None); log_line(A, f"絞り込み：「{inf['filter_for']}」用に覚えた押し方を再生しました（画面の中身までは確かめていません）")
                 else:                               # stopped half way: forget those presses, the AI does it next time
                     self.pos.get("filter_seq", {}).pop(D, None); self.save_pos()
                 inf["replay"] = None
