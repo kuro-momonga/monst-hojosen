@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 119
+HELPER_VER = 120
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -743,7 +743,7 @@ def make_handler(adbs):
                     i = int(q.get("i", 0)); AU.run[i] = bool(q.get("on")); SH.on = SH.on or AU.run[i]
                     if AU.run[i]: AU.info[i].update(ai_n=0, diff=0, filter_for=None, filter_try={}, h_last=None, same=0, deck=None, deck_for=None, as_is=q.get("mode") == "as_is", skip={})     # every start: from 極 again
                     AU.info[i]["msg"] = "動いています" if AU.run[i] else "停止中"
-                    print(f"書庫自動 {adbs[i].serial}: " + (("開始（今の絞り込みのまま）" if AU.info[i].get("as_is") else "開始") if AU.run[i] else "停止"))
+                    print(f"書庫自動 {adbs[i].serial}: " + (("開始（今の絞り込み・今のデッキのまま）" if AU.info[i].get("as_is") else "開始") if AU.run[i] else "停止"))
                     return self.reply(200, {"ok": True})
                 if self.path.startswith("/shuka/relabel"):
                     return self.reply(200, {"ok": SH.relabel(str(q["id"]), q["state"])})
@@ -1950,7 +1950,8 @@ class ShukaAuto:
             dl = self.pos.setdefault("deck_low", [])
             if not any(sig_dist(low, d) < .03 for d in dl): dl.append(low); del dl[:-10]; self.save_pos()
         except Exception: pass
-        if inf.get("deck") == want and inf.get("deck_for") == (inf.get("pick") or {}).get("group"):
+        if inf.get("as_is"): name = "今のデッキ"      # the user chose the deck: never read or swipe it
+        if inf.get("as_is") or (inf.get("deck") == want and inf.get("deck_for") == (inf.get("pick") or {}).get("group")):
             # same difficulty as the last quest: the game keeps the last deck, so no reading - straight to 出撃
             data, off, w, h = A.raw_frame()
             gx, gy = self.pos.get("go") or (.49, .825)
@@ -2348,13 +2349,13 @@ class ShukaAuto:
         else:
             # right after the helper was chosen the next screen is the deck select. When the deck is already known for
             # this difficulty, never ask the AI about it: press 出撃 where it was found (if a teal button is there).
-            if inf.get("expect_deck") and now - inf["expect_deck"] < 20 and inf.get("deck") == want \
-                    and inf.get("deck_for") == G and self.pos.get("go"):
+            if inf.get("expect_deck") and now - inf["expect_deck"] < 20 and self.pos.get("go") \
+                    and (inf.get("as_is") or (inf.get("deck") == want and inf.get("deck_for") == G)):
                 gx, gy = self.pos["go"]
                 if _frac(data, off, w, h, (gx - .08, gy - .02, gx + .08, gy + .02), _TEAL) > .25:
                     pause(.5, 1.5); A.tap(w * (gx + random.uniform(-.04, .04)), h * (gy + random.uniform(-.008, .008)), random.random())
                     inf["expect_deck"] = None; inf["battle_t"] = time.time()
-                    inf["sortie_t"] = time.time(); inf["msg"] = f"デッキ：{'書庫★5制限' if want == 'star5' else '書庫周回'}のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
+                    inf["sortie_t"] = time.time(); inf["msg"] = "デッキ：" + ("今のデッキ" if inf.get("as_is") else "書庫★5制限" if want == "star5" else "書庫周回") + "のまま出撃"; log_line(A, inf["msg"]); inf["steps"] += 1
                     time.sleep(random.uniform(1.5, 2.5)); return
                 time.sleep(random.uniform(.8, 1.4)); return          # not shown yet: look again (no AI)
             # a window with exactly one orange button (攻略のヒントの OK, リザルトの OK, 日付が変わりました ...):
@@ -2376,7 +2377,7 @@ class ShukaAuto:
                 inf["msg"] = "画面が動いています"; return
             hist = [f"この周回でクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
             if inf.get("as_is"):
-                hist.append("※ 今回は絞り込みをユーザーが設定済み。表示順変更・絞り込みの窓は開かない・触らない。書庫の一覧では左上のクエストから順に選ぶ")
+                hist.append("※ 今回は絞り込みとデッキをユーザーが設定済み。表示順変更・絞り込みの窓は開かない・触らない。書庫の一覧では左上のクエストから順に選ぶ。助っ人は一番上、デッキは変えずにそのまま出撃")
             if inf.get("wait_since") and now - inf["wait_since"] > 30:
                 hist.append("※ 30秒以上「待つ」が続いている。「通信中」の表示は気にせず、画面にあるボタン（OK・閉じる・次へ・諦める など）を押すこと。wait は答えない")
             # safety: the AI is for the odd screen. Leaning on it again and again means the code lost its way:
@@ -2474,7 +2475,7 @@ h2{font-size:15px;margin:0 0 10px}table{width:100%;border-collapse:collapse;font
 input,select{font:inherit;font-size:13px;border-radius:8px;border:1px solid var(--line);background:#1f2430;color:var(--tx);padding:7px 10px}
 </style></head><body>
 <header><h1>書庫周回</h1><div class="sum"><span>きょうのオーブ <b id="orbs">0</b></span><span>AI料金 <b id="yen" style="font-size:16px">0円</b></span></div>
-<span style="flex:1"></span><select id="mode"><option value="auto">難易度を自動で絞り込む（極→★5→究極→激究極）</option><option value="as_is">今の絞り込みのまま回す（左上から順に）</option></select><button id="all" class="go">ぜんぶ回す</button><button id="none" class="stop">ぜんぶ止める</button></header>
+<span style="flex:1"></span><select id="mode"><option value="auto">難易度を自動で絞り込む（極→★5→究極→激究極）</option><option value="as_is">今の絞り込み・今のデッキのまま回す（左上から順に）</option></select><button id="all" class="go">ぜんぶ回す</button><button id="none" class="stop">ぜんぶ止める</button></header>
 <div class="grid" id="m"></div>
 <section><h2 id="lh">クリアしたクエスト</h2><div class="lg"><table id="LG"></table></div></section>
 <section><details><summary>くわしい設定・調べもの（ふだんは触らなくてOK）</summary>
