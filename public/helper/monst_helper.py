@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 118
+HELPER_VER = 119
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -670,7 +670,7 @@ def make_handler(adbs):
                                        f"<span>{sn['t']}秒 → {_h.escape(' / '.join(sn['names']) or '（読めず）')}</span></div>")
                     return self.reply(200, "".join(out).encode(), "text/html; charset=utf-8")
                 if self.path.startswith("/shuka/state"):
-                    return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k in ("msg", "steps", "clears", "quest")}, "diff": DIFFS[min(AU.info[i].get("diff", 0), len(DIFFS) - 1)], "done": AU.info[i].get("diff", 0) >= len(DIFFS)} for i in range(len(adbs))]})
+                    return self.reply(200, {**SH.status(), "log": AU.log[-300:], "auto": [{"on": AU.run[i], **{k: v for k, v in AU.info[i].items() if k in ("msg", "steps", "clears", "quest")}, "diff": "今の絞り込み" if AU.info[i].get("as_is") else DIFFS[min(AU.info[i].get("diff", 0), len(DIFFS) - 1)], "done": AU.info[i].get("diff", 0) >= len(DIFFS)} for i in range(len(adbs))]})
                 if self.path.startswith("/shuka/limg"):
                     from urllib.parse import urlparse, parse_qs
                     lid = "".join(ch for ch in (parse_qs(urlparse(self.path).query).get("id") or [""])[0] if ch.isdigit())
@@ -741,9 +741,9 @@ def make_handler(adbs):
                     return self.reply(200, SH.status())
                 if self.path.startswith("/shuka/auto"):
                     i = int(q.get("i", 0)); AU.run[i] = bool(q.get("on")); SH.on = SH.on or AU.run[i]
-                    if AU.run[i]: AU.info[i].update(ai_n=0, diff=0, filter_for=None, filter_try={}, h_last=None, same=0, deck=None, deck_for=None)     # every start: from 極 again
+                    if AU.run[i]: AU.info[i].update(ai_n=0, diff=0, filter_for=None, filter_try={}, h_last=None, same=0, deck=None, deck_for=None, as_is=q.get("mode") == "as_is", skip={})     # every start: from 極 again
                     AU.info[i]["msg"] = "動いています" if AU.run[i] else "停止中"
-                    print(f"書庫自動 {adbs[i].serial}: " + ("開始" if AU.run[i] else "停止"))
+                    print(f"書庫自動 {adbs[i].serial}: " + (("開始（今の絞り込みのまま）" if AU.info[i].get("as_is") else "開始") if AU.run[i] else "停止"))
                     return self.reply(200, {"ok": True})
                 if self.path.startswith("/shuka/relabel"):
                     return self.reply(200, {"ok": SH.relabel(str(q["id"]), q["state"])})
@@ -1219,7 +1219,7 @@ def ask_claude_any_quest(png, diff):
     if not key: return None
     body = {"model": SHUKA_MODEL, "max_tokens": 50, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode()}},
-        {"type": "text", "text": f"モンストの「追憶の書庫」の一覧です（難易度「{diff}」で絞り込み中のはず）。一覧にクエスト（モンスターのアイコン）が1つでも表示されていれば yes、1つもなければ no、一覧の画面でない・読み込み中なら unsure とだけ答えてください。"}]}]}
+        {"type": "text", "text": f"モンストの「追憶の書庫」の一覧です（{diff if diff.startswith("ユーザー") else "難易度「" + diff + "」"}で絞り込み中のはず）。一覧にクエスト（モンスターのアイコン）が1つでも表示されていれば yes、1つもなければ no、一覧の画面でない・読み込み中なら unsure とだけ答えてください。"}]}]}
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
@@ -1632,7 +1632,7 @@ def phone_pusher(AU, SH):
                   "log": AU.log[-15:], "inst": []}
             for i, inf in enumerate(AU.info):
                 st["inst"].append({"on": AU.run[i], "msg": inf.get("msg", ""), "clears": inf.get("clears", 0),
-                                   "diff": DIFFS[min(inf.get("diff", 0), len(DIFFS) - 1)], "done": inf.get("diff", 0) >= len(DIFFS),
+                                   "diff": "今の絞り込み" if inf.get("as_is") else DIFFS[min(inf.get("diff", 0), len(DIFFS) - 1)], "done": inf.get("diff", 0) >= len(DIFFS),
                                    "png": base64.b64encode(inf["png_s"]).decode() if AU.run[i] and inf.get("png_s") else ""})
             req = urllib.request.Request(PHONE_URL, data=json.dumps(st, ensure_ascii=False).encode(), method="POST",
                                          headers={"content-type": "application/json", "User-Agent": "Mozilla/5.0 monst-helper"})
@@ -2180,6 +2180,8 @@ class ShukaAuto:
             if di >= len(DIFFS):
                 return self.stop(i, A, inf, "極・★5以下制限・究極・激究極のクエストは全部終わりました")
             D = DIFFS[di]
+            if inf.get("as_is"):                    # the user set the filter: never open it, just play from the top-left
+                D = "今の絞り込み"; inf["filter_for"] = D; inf["replay"] = None
             inf["replay_wait"] = 0
             if inf.get("replay") is not None:       # back on the list after replaying the filter presses
                 if not inf["replay"]:
@@ -2211,6 +2213,13 @@ class ShukaAuto:
                     if inf["empty_n"] < 3 or (not _search_bar(data, off, w, h) and inf["empty_n"] < 6):
                         inf["msg"] = f"一覧が空に見える（{inf['empty_n']}回目の確認）"; time.sleep(random.uniform(1.2, 2)); return
                     inf["empty_n"] = 0
+                    if inf.get("as_is"):
+                        left = ask_claude_any_quest(png_small(data, off, w, h, 3), "ユーザーが決めた条件")
+                        with self.sh.lock: self.sh.ai_calls += 1
+                        if left is not False:
+                            inf["msg"] = "一覧の確認待ち"; time.sleep(2); return
+                        inf["diff"] = len(DIFFS)
+                        return self.stop(i, A, inf, "今の絞り込みの一覧が空になりました。全部終わりです")
                     # before moving on, make sure there really is no 極 (etc.) quest on the list: a heading still shown,
                     # or the AI seeing a quest, means it is not empty
                     # the heading shows the count even at 0: read it (small crop of the heading band)
@@ -2282,7 +2291,7 @@ class ShukaAuto:
                     # The first time: back and fix the filter. If it happens again anyway: just skip that quest.
                     inf["from_list"] = False; pause(.6, 1.6); tap_back(A, w, h)
                     inf["clear_seen"] = inf.get("clear_seen", 0) + 1
-                    if inf["clear_seen"] == 1:
+                    if inf["clear_seen"] == 1 and not inf.get("as_is"):
                         self.pos.get("filter_seq", {}).pop(G, None); self.save_pos()
                         inf["filter_for"] = None; inf["msg"] = "CLEAR済みのクエスト：戻って絞り込みを直す"
                         inf["hist"] = (inf["hist"] + ["一覧にCLEAR済みが出ていた。絞り込みが必要：表示順変更→初クリア報酬を「報酬未受取」→決定"])[-14:]
@@ -2366,6 +2375,8 @@ class ShukaAuto:
             if sig_dist(full_sig(d2, o2, w2, h2), fs) > .03 and same < 6:
                 inf["msg"] = "画面が動いています"; return
             hist = [f"この周回でクリアした数: {int(inf['clears'])}"] + inf["hist"] + ([f"※ 同じ画面が{same}回続いている。さっきと違う操作を試すこと"] if same >= 2 else [])
+            if inf.get("as_is"):
+                hist.append("※ 今回は絞り込みをユーザーが設定済み。表示順変更・絞り込みの窓は開かない・触らない。書庫の一覧では左上のクエストから順に選ぶ")
             if inf.get("wait_since") and now - inf["wait_since"] > 30:
                 hist.append("※ 30秒以上「待つ」が続いている。「通信中」の表示は気にせず、画面にあるボタン（OK・閉じる・次へ・諦める など）を押すこと。wait は答えない")
             # safety: the AI is for the odd screen. Leaning on it again and again means the code lost its way:
@@ -2463,7 +2474,7 @@ h2{font-size:15px;margin:0 0 10px}table{width:100%;border-collapse:collapse;font
 input,select{font:inherit;font-size:13px;border-radius:8px;border:1px solid var(--line);background:#1f2430;color:var(--tx);padding:7px 10px}
 </style></head><body>
 <header><h1>書庫周回</h1><div class="sum"><span>きょうのオーブ <b id="orbs">0</b></span><span>AI料金 <b id="yen" style="font-size:16px">0円</b></span></div>
-<span style="flex:1"></span><button id="all" class="go">ぜんぶ回す</button><button id="none" class="stop">ぜんぶ止める</button></header>
+<span style="flex:1"></span><select id="mode"><option value="auto">難易度を自動で絞り込む（極→★5→究極→激究極）</option><option value="as_is">今の絞り込みのまま回す（左上から順に）</option></select><button id="all" class="go">ぜんぶ回す</button><button id="none" class="stop">ぜんぶ止める</button></header>
 <div class="grid" id="m"></div>
 <section><h2 id="lh">クリアしたクエスト</h2><div class="lg"><table id="LG"></table></div></section>
 <section><details><summary>くわしい設定・調べもの（ふだんは触らなくてOK）</summary>
@@ -2487,7 +2498,7 @@ function render(){
   <div class="msg">${esc(a.on||a.msg?a.msg:s.state)}</div>
   <button data-a="${i}" class="${a.on?'stop':'go'}">${a.on?'止める':'回す'}</button>
   <div class="small">${esc(s.serial)}</div></div>`;}).join('');
- document.querySelectorAll('button[data-a]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.a;await post('/shuka/auto',{i,on:!((S.auto||[])[i]||{}).on});tick();});
+ document.querySelectorAll('button[data-a]').forEach(b=>b.onclick=async()=>{const i=+b.dataset.a;await post('/shuka/auto',{i,on:!((S.auto||[])[i]||{}).on,mode:$('mode').value});tick();});
  $('lh').textContent=`クリアしたクエスト ${lg.length}個 ・ オーブ ${lg.reduce((a,b)=>a+(b.orb||0),0)}個`;
  $('LG').innerHTML=lg.length?lg.slice().reverse().map(l=>`<tr><td>${esc(l.t)}</td><td>${l.i}画面目</td><td>${esc(l.quest)}</td><td>+${l.orb}オーブ</td></tr>`).join(''):'<tr><td class="small">まだありません</td></tr>';
  $('run').textContent=S.on?'画面の判定を止める':'画面の判定だけ始める';
@@ -2499,8 +2510,10 @@ function render(){
  const sig=S.learn.map(l=>l.id+l.state).join();if(sig!==window._ls){window._ls=sig;
   $('L').innerHTML=S.learn.map(l=>`<div><b>${esc(l.state)}</b> <span class="small">${l.n}回</span><img src="/shuka/limg?id=${l.id}" alt=""><select data-l="${l.id}"><option value="">直す…</option>${opts}<option value="_delete">この見本を消す</option></select></div>`).join('');
   document.querySelectorAll('select[data-l]').forEach(x=>x.onchange=async()=>{if(x.value){await post('/shuka/relabel',{id:x.dataset.l,state:x.value});window._ls='';tick();}});}}
+try{$('mode').value=localStorage.getItem('shukaMode')||'auto';}catch(e){}
+$('mode').onchange=()=>{try{localStorage.setItem('shukaMode',$('mode').value);}catch(e){}};
 $('run').onclick=async()=>{await post('/shuka/run',{on:!S.on});tick();};
-$('all').onclick=async()=>{for(let i=0;i<S.inst.length;i++){if(!((S.auto||[])[i]||{}).on){await post('/shuka/auto',{i,on:true});await new Promise(r=>setTimeout(r,1500+Math.random()*2500));}}tick();};
+$('all').onclick=async()=>{for(let i=0;i<S.inst.length;i++){if(!((S.auto||[])[i]||{}).on){await post('/shuka/auto',{i,on:true,mode:$('mode').value});await new Promise(r=>setTimeout(r,1500+Math.random()*2500));}}tick();};
 $('none').onclick=async()=>{for(let i=0;i<S.inst.length;i++)await post('/shuka/auto',{i,on:false});tick();};
 tick();setInterval(()=>{if(!document.querySelector('select:focus,input:focus'))tick();},3000);
 </script></body></html>"""
