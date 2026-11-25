@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 122
+HELPER_VER = 123
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2337,6 +2337,11 @@ class ShukaAuto:
             L = None
         if L:
             a = dict(L["act"]); how = "覚えた操作"
+            if L.get("state") in ("quest_list", "home") and same < 6:
+                time.sleep(random.uniform(.6, .9))
+                d2, o2, w2, h2 = A.raw_frame()
+                if sig_dist(full_sig(d2, o2, w2, h2), fs) > .03:
+                    inf["msg"] = "画面が動いています"; return       # still sliding: the learned spot is not there yet
             wy = a.get("why") or ""
             if a.get("action") == "tap" and ("ヒント" in wy or "EXTRA" in wy.upper() or "諦め" in wy):
                 btn = orange_buttons(data, off, w, h)
@@ -2371,6 +2376,10 @@ class ShukaAuto:
                     inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]; time.sleep(random.uniform(1, 1.8)); return
             if now - inf.get("battle_t", 0) < 20 and not inf.get("force_look"):     # just after battle activity
                 inf["msg"] = "バトル：演出中"; time.sleep(random.uniform(1.2, 2)); return
+            # a screen the AI already answered "wait (loading / 通信中)" for: wait again without asking
+            wl = self.pos.setdefault("wait_looks", [])
+            if same < 8 and any(sig_dist(fs, x) < .06 for x in wl):
+                inf["msg"] = "通信中（待つ）"; time.sleep(random.uniform(1.2, 2)); return
             # only ask about a screen that holds still (no AI for screens in the middle of an animation)
             time.sleep(.7)
             d2, o2, w2, h2 = A.raw_frame()
@@ -2416,6 +2425,10 @@ class ShukaAuto:
         if a["action"] in ("tap", "longpress") and ("挑戦する" in why or ("EXTRA" in why.upper() and not any(t in why for t in ("諦", "あきら", "しない", "閉じ")))):
             inf["hist"] = (inf["hist"] + ["EXTRA STAGEには挑戦しない。「諦める」の方を押すこと"])[-14:]
             log_line(A, f"EXTRAに挑戦しそうだったので押しませんでした（{why}）"); time.sleep(1); return
+        if a["action"] == "wait" and how == "AI" and st == "loading":
+            wl = self.pos.setdefault("wait_looks", [])
+            if not any(sig_dist(fs, x) < .06 for x in wl):
+                wl.append([round(v, 1) for v in fs]); del wl[:-12]; self.save_pos()
         if a["action"] == "wait":
             if not inf.get("wait_since"): inf["wait_since"] = now
         else:
