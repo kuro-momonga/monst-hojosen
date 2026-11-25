@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 124
+HELPER_VER = 125
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -1091,15 +1091,17 @@ def first_icon(data, off, w, h, start=.30):
         fr.append((y, n / t))
     j = 0
     while j < len(fr):
-        if fr[j][1] > .3:
+        if fr[j][1] > .18:
             k = end = j; low = 0
             for m in range(j + 1, len(fr)):
-                if fr[m][1] > .08: end = m; low = 0
+                if fr[m][1] > .04: end = m; low = 0
                 else:
                     low += 1
-                    if low > 5: break           # dark parts inside an icon (water / dark element art)
+                    if low > 8: break           # dark parts inside an icon (water / dark element art)
             y0, y1 = fr[k][0], fr[end][0]
             if w * .07 < y1 - y0 < w * .24: return y0, (y0 + y1) / 2
+            if y1 - y0 >= w * .24 and fr[k][1] > .18:
+                return y0, y0 + w * .085        # ran into the next row (dark art in between): one icon from its top
             j = end + 1
         else:
             j += 1
