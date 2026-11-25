@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 127
+HELPER_VER = 128
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2045,10 +2045,10 @@ class ShukaAuto:
         data, off, w, h = A.raw_frame()                     # the field may have moved while we waited
         if not turn_from_rgba(data, off, w, h): return
         inf["k_rep"] = inf.get("k_rep", 0) + 1 if k == inf.get("last_k") else 0; inf["last_k"] = k
-        if inf["k_rep"] >= 6:
+        if inf["k_rep"] >= 8:
             # the same ball's turn 6+ times in a row: the shots do not go (the game waits on the network). Do not keep
             # pulling: wait, and let the dialog rules (通信エラー → リトライ) take over when a window shows
-            if inf["k_rep"] == 6: log_line(A, "バトル：何度打っても番が変わらない（通信待ち？）ので様子を見ます")
+            if inf["k_rep"] == 8: log_line(A, "バトル：何度打っても番が変わらない（通信待ち？）ので様子を見ます")
             inf["msg"] = "バトル：様子見"; time.sleep(random.uniform(8, 14))
             if inf["k_rep"] % 4: return
         L = read_labels(A, data, off, w, h, deadline=t0 + 3.8) if time.time() < t0 + 3 else []
@@ -2063,14 +2063,15 @@ class ShukaAuto:
             how = "横向き"
         # the pull can start anywhere (never on the ball every time): wherever the thumb happens to be, mostly
         # around the middle. If the drag would not fit on screen from there, start from the middle instead.
-        r = random.random()
-        if r < .7: cx, cy = w * random.uniform(.3, .7), h * random.uniform(.35, .6)
-        else: cx, cy = w * random.uniform(.2, .8), h * random.uniform(.25, .7)
+        rep = inf.get("k_rep", 0)
+        if rep < 2: cx, cy = w * random.uniform(.2, .8), h * random.uniform(.6, .72)
+        elif rep < 4: cx, cy = w * random.uniform(.2, .8), h * random.uniform(.2, .3)
+        else: cx, cy = w * random.uniform(.15, .85), h * random.uniform(.2, .72)
         ms, hold = random.uniform(1000, 1450), random.uniform(60, 220)
         try:
             A.shoot(ang, cx, cy, ms, hold, True, "auto", random.random())
         except RuntimeError:
-            A.shoot(ang, w * random.uniform(.4, .6), h * random.uniform(.42, .52), ms, hold, True, "auto", random.random())
+            A.shoot(ang, w * random.uniform(.3, .7), h * random.uniform(.55, .65), ms, hold, True, "auto", random.random())
         inf["steps"] += 1; inf["msg"] = f"バトル：{ORD.get(k)} {how}（{ang:.0f}°）"; log_line(A, inf["msg"])
         time.sleep(random.uniform(2.5, 3.5))     # the ball is still moving; the loop then waits for our next turn
 
@@ -2094,6 +2095,13 @@ class ShukaAuto:
         # ---- battle ----
         k = turn_from_rgba(data, off, w, h)
         if k:
+            # a window over the battle (ステージ攻略のカギ / 攻略のヒント) with its one OK in the middle: OK first,
+            # shots would only hit the window
+            ob = [b for b in orange_buttons(data, off, w, h) if w * .3 < b[0] < w * .7 and h * .45 < b[1] < h * .75]
+            if len(ob) == 1:
+                bx, by = ob[0]; pause(.5, 1.4)
+                A.tap(bx + random.uniform(-.03, .03) * w, by + random.uniform(-.006, .006) * h, random.random())
+                inf["msg"] = "バトル中の窓のOKを押した"; log_line(A, inf["msg"]); time.sleep(random.uniform(1, 1.8)); return
             return self.battle(i, A, inf, data, off, w, h, k)
         if self.sh._panel(data, off, w, h):
             # a window over the battle with one orange button (攻略のヒントの OK): press it, no AI
