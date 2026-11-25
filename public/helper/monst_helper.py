@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 128
+HELPER_VER = 129
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -505,12 +505,18 @@ def turn_from_rgba(data, off, w, h):
         return 0
     st = 4 * 6
     P = -1
-    for y in range(h // 2, h):
+    def orange_row(y):
         o = off + y * w * 4
         r, g, b = data[o:o + w * 4:st], data[o + 1:o + w * 4:st], data[o + 2:o + w * 4:st]
-        n = sum(1 for R, G, B in zip(r, g, b) if R > 200 and 140 < G < 220 and B < 80)
-        if n > len(r) * .5:
-            P = y; break
+        return sum(1 for R, G, B in zip(r, g, b) if R > 200 and 140 < G < 220 and B < 80) / max(len(r), 1)
+    gap = max(4, round(h * .008))
+    # the panel's top edge is a thin orange line (not orange right above and right below). A gold / orange stage
+    # background is a thick orange area: skip it. If no thin line shows, fall back to "orange, then not orange".
+    for strict in (True, False):
+        for y in range(h // 2 + gap, h - gap):
+            if orange_row(y) > .5 and orange_row(y + gap) < .3 and (not strict or orange_row(y - gap) < .3):
+                P = y; break
+        if P >= 0: break
     if P < 0:
         return 0
     v = []
