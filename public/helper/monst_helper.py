@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 125
+HELPER_VER = 126
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2212,7 +2212,7 @@ class ShukaAuto:
                     inf["replay"] = [list(p) for p in seq] if seq else None
                     log_line(A, f"表示順変更を開いた（難易度を「{D}」にする{'・覚えた押し方で' if seq else ''}）"); time.sleep(random.uniform(1.2, 2)); return
                 if f is None and inf.get("fallback_icon") and _search_bar(data, off, w, h):
-                    f = (h * .478, h * .508)          # under the first heading, list at its top (search bar showing)
+                    f = (h * .49, h * .53)            # under the first heading, list at its top (search bar showing)
                 if f is None:
                     # looks empty - but a list that is still loading or sliding in looks the same: only after
                     # 3 looks in a row over a few seconds, with the search bar showing, is it really empty
@@ -2221,8 +2221,19 @@ class ShukaAuto:
                         inf["msg"] = f"一覧が空に見える（{inf['empty_n']}回目の確認）"; time.sleep(random.uniform(1.2, 2)); return
                     inf["empty_n"] = 0
                     if inf.get("as_is"):
-                        left = ask_claude_any_quest(png_small(data, off, w, h, 3), "ユーザーが決めた条件")
+                        # the heading's number (究極 24 / 17 ...) says how many are left: 0 = done, more = an icon is there
+                        cnt = ask_claude_count(png_crop(data, off, w, h, 0, .40, 1, .52))
                         with self.sh.lock: self.sh.ai_calls += 1
+                        if cnt is not None:
+                            log_line(A, f"見出しの件数：{cnt}")
+                            if cnt == 0:
+                                inf["diff"] = len(DIFFS)
+                                return self.stop(i, A, inf, "見出しの件数が0になりました。今の絞り込みは全部終わりです")
+                            if _search_bar(data, off, w, h):
+                                inf["fallback_icon"] = True; inf["msg"] = "件数あり：左上の位置を押します"; return
+                        left = ask_claude_any_quest(png_small(data, off, w, h, 3), "ユーザーが決めた条件") if cnt is None else True
+                        if cnt is None:
+                            with self.sh.lock: self.sh.ai_calls += 1
                         if left is not False:
                             inf["as_is_empty"] = inf.get("as_is_empty", 0) + 1
                             if inf["as_is_empty"] >= 3:
