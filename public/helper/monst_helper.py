@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 123
+HELPER_VER = 124
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -2127,6 +2127,8 @@ class ShukaAuto:
         inf["same"] = inf["same"] + 1 if inf["last_sig"] and sig_dist(sig, inf["last_sig"]) < .02 else 0
         inf["last_sig"] = sig; same = inf["same"]
         if same >= 15:
+            if is_shuka_list(data, off, w, h) and first_icon(data, off, w, h) is None:
+                return self.stop(i, A, inf, "一覧にクエストが見えないまま進めません（今の絞り込みは全部終わった可能性が高い）")
             return self.stop(i, A, inf, "同じ画面から進めません")
         G = (inf.get("pick") or {}).get("group")
         want = "star5" if G == "★5以下制限" or canon(G) == "star5" else "normal"
@@ -2144,6 +2146,7 @@ class ShukaAuto:
                     try: json.dump(self.log, open(SHUKA_LOG, "w", encoding="utf-8"), ensure_ascii=False)
                     except Exception: pass
                     log_line(A, f"クリア {inf['clears']} 回目（{q}）")
+                    inf["played"] = True             # the last quest played is this 書庫 quest: the long press takes us back
                 inf.update(in_quest=False, lost=False, quest="")
                 # people do not play non-stop: a short break now and then, a longer one every 40-80 minutes
                 if not inf.get("next_rest"): inf["next_rest"] = now + random.uniform(40, 80) * 60
@@ -2171,7 +2174,7 @@ class ShukaAuto:
 
         # ---- 書庫 list: filtered to one 難易度 + 報酬未受取, the next quest is always the top-left one ----
         isl = not fl and is_shuka_list(data, off, w, h)
-        if isl and not _search_bar(data, off, w, h) and (now - inf.get("sortie_t", 0) < 15 or self.on_deck(data, off, w, h, sig)):
+        if isl and (now - inf.get("sortie_t", 0) < 15 or self.on_deck(data, off, w, h, sig)):
             isl = False                      # the deck screen / the start of the quest after 出撃: not the list
         inf["list_n"] = inf.get("list_n", 0) + 1 if isl else 0
         if isl and inf["list_n"] < 2 and not _search_bar(data, off, w, h):
@@ -2219,6 +2222,9 @@ class ShukaAuto:
                         left = ask_claude_any_quest(png_small(data, off, w, h, 3), "ユーザーが決めた条件")
                         with self.sh.lock: self.sh.ai_calls += 1
                         if left is not False:
+                            inf["as_is_empty"] = inf.get("as_is_empty", 0) + 1
+                            if inf["as_is_empty"] >= 3:
+                                return self.stop(i, A, inf, "一覧にクエストが見えないままです（今の絞り込みは全部終わった可能性が高い）")
                             inf["msg"] = "一覧の確認待ち"; time.sleep(2); return
                         inf["diff"] = len(DIFFS)
                         return self.stop(i, A, inf, "今の絞り込みの一覧が空になりました。全部終わりです")
@@ -2242,7 +2248,7 @@ class ShukaAuto:
                     inf["diff"] = di + 1; inf["filter_for"] = None
                     log_line(A, f"「{D}」は全部終わりました → 次は「{DIFFS[di + 1] if di + 1 < len(DIFFS) else 'なし'}」")
                     return
-                inf["empty_n"] = 0; inf["fallback_icon"] = False
+                inf["empty_n"] = 0; inf["fallback_icon"] = False; inf["as_is_empty"] = 0
                 n = inf.setdefault("skip", {}).get(D, 0)        # quests lost twice are skipped: the next one to the right
                 pause(.6, 1.8)
                 A.tap(w * (.13 + .181 * (n % 5)) + random.uniform(-.03, .03) * w, f[1] + w * .18 * (n // 5) + random.uniform(-.03, .03) * w, random.random())
@@ -2376,6 +2382,24 @@ class ShukaAuto:
                     inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]; time.sleep(random.uniform(1, 1.8)); return
             if now - inf.get("battle_t", 0) < 20 and not inf.get("force_look"):     # just after battle activity
                 inf["msg"] = "バトル：演出中"; time.sleep(random.uniform(1.2, 2)); return
+            # is the game still the app in front? If the emulator's launcher (or another app) shows, start the game again
+            try:
+                foc = A.run("shell", "dumpsys window | grep mCurrentFocus", timeout=8)
+            except Exception:
+                foc = ""
+            mp = re.search(r"u0 ([\w.]+)/", foc or "")
+            pkg = self.pos.get("pkg")
+            if mp and ("monsterstrike" in mp.group(1) or mp.group(1) == pkg):
+                if pkg != mp.group(1): self.pos["pkg"] = mp.group(1); self.save_pos()
+            elif mp:
+                rl = [t for t in inf.get("relaunch", []) if now - t < 3600]
+                if len(rl) >= 3:
+                    return self.stop(i, A, inf, "モンストが何度も閉じてしまうので止めました")
+                inf["relaunch"] = rl + [now]
+                A.run("shell", "monkey", "-p", pkg or "jp.co.mixi.monsterstrike", "-c", "android.intent.category.LAUNCHER", "1", timeout=20)
+                log_line(A, f"モンストが閉じていた（前に出ていたのは {mp.group(1)}）ので起動し直しました")
+                inf.update(played=False, after_lp=False, in_quest=False); inf["msg"] = "モンストを起動し直し中"
+                time.sleep(random.uniform(15, 20)); return
             # a screen the AI already answered "wait (loading / 通信中)" for: wait again without asking
             wl = self.pos.setdefault("wait_looks", [])
             if same < 8 and any(sig_dist(fs, x) < .06 for x in wl):
