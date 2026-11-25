@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 126
+HELPER_VER = 127
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -919,9 +919,10 @@ def quest_bands(data, off, w, h):
     runs = []
     for y, f in fr:
         if f > .5:
-            if runs and y - runs[-1][1] <= h * .025: runs[-1][1] = y
-            else: runs.append([y, y])
-    return [(a + b) / 2 for a, b in runs if h * .045 <= b - a <= h * .085]
+            if runs and y - runs[-1][1] <= h * .025: runs[-1][1] = y; runs[-1][2].append(f)
+            else: runs.append([y, y, [f]])
+    # a 詳細 button is solid teal (mean > .75); the quest banner's character picture with a green frame is patchy
+    return [(a + b) / 2 for a, b, fs in runs if h * .045 <= b - a <= h * .085 and sum(fs) / len(fs) > .75]
 
 
 def has_clear_tag(data, off, w, h):
@@ -2265,7 +2266,7 @@ class ShukaAuto:
                 n = inf.setdefault("skip", {}).get(D, 0)        # quests lost twice are skipped: the next one to the right
                 pause(.6, 1.8)
                 A.tap(w * (.13 + .181 * (n % 5)) + random.uniform(-.03, .03) * w, f[1] + w * .18 * (n // 5) + random.uniform(-.03, .03) * w, random.random())
-                inf["pick"] = {"group": D}; inf["from_list"] = True; inf["steps"] += 1; inf.setdefault("filter_try", {})[D] = 0
+                inf["pick"] = {"group": D}; inf["from_list"] = True; inf["list_t"] = time.time(); inf["steps"] += 1; inf.setdefault("filter_try", {})[D] = 0
                 inf["msg"] = f"一覧：「{D}」の{n + 1}番目を押した"; log_line(A, inf["msg"])
                 inf["hist"] = (inf["hist"] + [inf["msg"]])[-14:]; time.sleep(random.uniform(1.2, 2)); return
             return            # the list is ours: never ask the AI about it
@@ -2283,10 +2284,14 @@ class ShukaAuto:
                     time.sleep(random.uniform(1.2, 2)); return
                 inf["after_lp"] = False
 
+        # a quest page (difficulty bands with 詳細) wins over the deck look: the dimmed list behind a quest panel
+        # can look like the deck screen's gray grid
+        qb = [] if fl or is_shuka_list(data, off, w, h) else quest_bands(data, off, w, h)
+        qpage = len(qb) >= 2 or (len(qb) == 1 and (shuka_header(data, off, w, h) or now - inf.get("list_t", 0) < 12))
         # ---- deck select ----
         if fl:
             pass
-        elif self.on_deck(data, off, w, h, sig) and same < 3 and self.rule(inf, "deck"):
+        elif not qpage and self.on_deck(data, off, w, h, sig) and same < 3 and self.rule(inf, "deck"):
             if self.deck(A, i, inf, want): return
             inf["hist"] = (inf["hist"] + [f"デッキを{'書庫★5制限' if want == 'star5' else '書庫周回'}にしたいが、プログラムでは見つからなかった"])[-14:]
 
@@ -2301,8 +2306,7 @@ class ShukaAuto:
         else:
             # a quest page: two or more difficulty bands (or one band under the 書庫 header). A lone teal patch on
             # a battle screen is not one.
-            bands = [] if is_shuka_list(data, off, w, h) else quest_bands(data, off, w, h)
-            if len(bands) == 1 and not shuka_header(data, off, w, h): bands = []
+            bands = qb if qpage else []
             if bands and same < 3 and self.rule(inf, "quest"):
                 if inf.get("after_lp"):          # reached by the long press from home: back to the list
                     inf["after_lp"] = False; pause(.6, 1.8); tap_back(A, w, h)
