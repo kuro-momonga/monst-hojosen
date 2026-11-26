@@ -18,7 +18,7 @@ import argparse, json, math, os, random, shutil, struct, subprocess, sys, thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = 8765
-HELPER_VER = 129
+HELPER_VER = 130
 CANDIDATES = [
     r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
     r"C:\Program Files\BlueStacks\HD-Adb.exe",
@@ -513,7 +513,7 @@ def turn_from_rgba(data, off, w, h):
     # the panel's top edge is a thin orange line (not orange right above and right below). A gold / orange stage
     # background is a thick orange area: skip it. If no thin line shows, fall back to "orange, then not orange".
     for strict in (True, False):
-        for y in range(h // 2 + gap, h - gap):
+        for y in range(max(h // 2 + gap, int(h * .64)), int(h * .82)):
             if orange_row(y) > .5 and orange_row(y + gap) < .3 and (not strict or orange_row(y - gap) < .3):
                 P = y; break
         if P >= 0: break
@@ -952,6 +952,20 @@ def deck_bits(data, off, w, h, box=None):
                     if min(data[i], data[i + 1], data[i + 2]) > 170: n += 1
             out.append(n / max(1, t))
     return out
+
+
+def in_window(data, off, w, h, bx, by):
+    """an OK button of a real window sits on the window's dark navy background (just above and below it).
+    An orange patch of a stage (lava, a gold room) does not"""
+    n = 0
+    for dy in (-.031, .031):
+        for dx in (-.055, 0, .055):
+            x, y = int(bx + dx * w), int(by + dy * h)
+            if not (0 <= x < w and 0 <= y < h): continue
+            o = off + (y * w + x) * 4
+            r, g, b = data[o], data[o + 1], data[o + 2]
+            if b > r + 15 and max(r, g, b) < 140: n += 1
+    return n >= 4
 
 
 def orange_buttons(data, off, w, h):
@@ -2103,7 +2117,8 @@ class ShukaAuto:
         if k:
             # a window over the battle (ステージ攻略のカギ / 攻略のヒント) with its one OK in the middle: OK first,
             # shots would only hit the window
-            ob = [b for b in orange_buttons(data, off, w, h) if w * .3 < b[0] < w * .7 and h * .45 < b[1] < h * .75]
+            ob = [b for b in orange_buttons(data, off, w, h) if w * .3 < b[0] < w * .7 and h * .45 < b[1] < h * .75
+                  and in_window(data, off, w, h, *b)]
             if len(ob) == 1:
                 bx, by = ob[0]; pause(.5, 1.4)
                 A.tap(bx + random.uniform(-.03, .03) * w, by + random.uniform(-.006, .006) * h, random.random())
@@ -2111,7 +2126,7 @@ class ShukaAuto:
             return self.battle(i, A, inf, data, off, w, h, k)
         if self.sh._panel(data, off, w, h):
             # a window over the battle with one orange button (攻略のヒントの OK): press it, no AI
-            btn = [b for b in orange_buttons(data, off, w, h) if b[1] < h * .75]
+            btn = [b for b in orange_buttons(data, off, w, h) if b[1] < h * .75 and in_window(data, off, w, h, *b)]
             if len(btn) == 1:
                 bx, by = btn[0]; pause(.5, 1.6)
                 A.tap(bx + random.uniform(-.03, .03) * w, by + random.uniform(-.006, .006) * h, random.random())
